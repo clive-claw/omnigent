@@ -4676,11 +4676,12 @@ def _run_args_include_harness(run_args: tuple[str, ...] | list[str]) -> bool:
 def _bundled_agent_codex_subscription_fallback_harness(name: str) -> str | None:
     """Return an ephemeral Codex harness override for a bundled agent.
 
-    Polly's bundled brain is Claude SDK, but local users may have only a
-    subscription-backed Codex CLI configured. In that shape, launch Polly with
-    the headless Codex app-server harness for this run instead of falling
-    through to the Claude brain's credential error or forcing users toward the
-    OpenAI-Agents API-key/Databricks path.
+    Polly's bundled brain is Claude SDK, but a local user's Claude subscription
+    can be temporarily unusable (for example, quota exhausted) while their
+    Codex CLI subscription is available. In that shape, launch Polly with the
+    headless Codex app-server harness for this run instead of falling through to
+    the Claude brain's runtime error or forcing users toward the OpenAI-Agents
+    API-key/Databricks path.
 
     This never persists a default and never overrides an explicit
     ``--harness``.
@@ -4689,13 +4690,13 @@ def _bundled_agent_codex_subscription_fallback_harness(name: str) -> str | None:
     from omnigent.onboarding.detected import effective_config_with_detected
     from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
 
+    if name != "polly":
+        return None
     brain_harness = _bundled_agent_brain_harness(name)
     if brain_harness != "claude-sdk":
         return None
     try:
         config = effective_config_with_detected(load_config())
-        if default_provider_for_harness(config, brain_harness) is not None:
-            return None
         codex_provider = default_provider_for_harness(config, "codex")
     except (OSError, yaml.YAMLError, OmnigentError):
         return None
@@ -5332,8 +5333,7 @@ def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
         if fallback_harness is not None:
             forwarded_args = ["--harness", fallback_harness, *forwarded_args]
             click.echo(
-                f"No Claude credential configured for {name} — using the "
-                "logged-in Codex CLI subscription for this run.",
+                f"Using the logged-in Codex CLI subscription for {name}.",
                 err=True,
             )
     # standalone_mode=False propagates ClickExceptions to main()'s handler
