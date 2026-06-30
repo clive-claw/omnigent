@@ -226,11 +226,12 @@ def _dispatch_wrapper(
     native_agent = native_coding_agent_for_wrapper_label(wrapper)
     if native_agent is None:
         return False
+    dispatch_server = _ensure_dispatch_server(server)
     if native_agent.key == "claude":
         from omnigent.claude_native import run_claude_native
 
         run_claude_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             claude_args=(),
         )
@@ -239,7 +240,7 @@ def _dispatch_wrapper(
         from omnigent.codex_native import run_codex_native
 
         run_codex_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             codex_args=(),
         )
@@ -248,7 +249,7 @@ def _dispatch_wrapper(
         from omnigent.pi_native import run_pi_native
 
         run_pi_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             pi_args=(),
         )
@@ -257,7 +258,7 @@ def _dispatch_wrapper(
         from omnigent.cursor_native import run_cursor_native
 
         run_cursor_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             cursor_args=(),
         )
@@ -266,7 +267,7 @@ def _dispatch_wrapper(
         from omnigent.kiro_native import run_kiro_native
 
         run_kiro_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             kiro_args=(),
         )
@@ -275,7 +276,7 @@ def _dispatch_wrapper(
         from omnigent.goose_native import run_goose_native
 
         run_goose_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             goose_args=(),
         )
@@ -284,7 +285,7 @@ def _dispatch_wrapper(
         from omnigent.antigravity_native import run_antigravity_native
 
         run_antigravity_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             antigravity_args=(),
         )
@@ -293,7 +294,7 @@ def _dispatch_wrapper(
         from omnigent.qwen_native import run_qwen_native
 
         run_qwen_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             qwen_args=(),
         )
@@ -302,7 +303,7 @@ def _dispatch_wrapper(
         from omnigent.kimi_native import run_kimi_native
 
         run_kimi_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             kimi_args=(),
         )
@@ -311,12 +312,32 @@ def _dispatch_wrapper(
         from omnigent.hermes_native import run_hermes_native
 
         run_hermes_native(
-            server=server,
+            server=dispatch_server,
             session_id=session_id,
             hermes_args=(),
         )
         return True
     return False
+
+
+def _ensure_dispatch_server(server: str | None) -> str:
+    """
+    Return the concrete Omnigent server URL for native wrapper dispatch.
+
+    Top-level ``omnigent resume`` can classify a local conversation from
+    ``~/.omnigent/chat.db`` without starting the host daemon, but native
+    wrappers now require the resolved backend URL before launch. Mirror the
+    direct native commands by resolving the backend at the dispatch boundary.
+
+    :param server: Remote Omnigent server URL, or ``None`` for local mode.
+    :returns: Concrete server base URL without a trailing slash.
+    """
+    if server is not None:
+        return server.rstrip("/")
+
+    from omnigent.cli import _ensure_backend
+
+    return _ensure_backend(None).rstrip("/")
 
 
 def _read_wrapper_label_local(*, conv_id: str) -> str | None:

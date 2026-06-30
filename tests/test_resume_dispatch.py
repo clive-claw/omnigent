@@ -238,6 +238,11 @@ def test_dispatch_by_runtime_codex_native_local_routes_to_wrapper(
         "_read_wrapper_label_local",
         lambda *, conv_id: "codex-native-ui",
     )
+    monkeypatch.setattr(
+        resume_dispatch,
+        "_ensure_dispatch_server",
+        lambda server: "http://127.0.0.1:8123",
+    )
     captured: dict[str, Any] = {}
 
     def _capture(**kwargs: Any) -> None:
@@ -257,7 +262,7 @@ def test_dispatch_by_runtime_codex_native_local_routes_to_wrapper(
     )
 
     assert captured["session_id"] == "conv_codex"
-    assert captured["server"] is None
+    assert captured["server"] == "http://127.0.0.1:8123"
     assert captured["codex_args"] == ()
 
 
@@ -342,6 +347,11 @@ def test_dispatch_by_runtime_antigravity_native_local_routes_to_wrapper(
         "_read_wrapper_label_local",
         lambda *, conv_id: "antigravity-native-ui",
     )
+    monkeypatch.setattr(
+        resume_dispatch,
+        "_ensure_dispatch_server",
+        lambda server: "http://127.0.0.1:8123",
+    )
     captured: dict[str, Any] = {}
 
     def _capture(**kwargs: Any) -> None:
@@ -361,7 +371,7 @@ def test_dispatch_by_runtime_antigravity_native_local_routes_to_wrapper(
     )
 
     assert captured["session_id"] == "conv_agy_local"
-    assert captured["server"] is None
+    assert captured["server"] == "http://127.0.0.1:8123"
     assert captured["antigravity_args"] == ()
 
 
@@ -378,6 +388,11 @@ def test_dispatch_by_runtime_claude_native_local_still_routes_to_wrapper(
         resume_dispatch,
         "_read_wrapper_label_local",
         lambda *, conv_id: "claude-code-native-ui",
+    )
+    monkeypatch.setattr(
+        resume_dispatch,
+        "_ensure_dispatch_server",
+        lambda server: "http://127.0.0.1:8123",
     )
     captured: dict[str, Any] = {}
 
@@ -398,7 +413,7 @@ def test_dispatch_by_runtime_claude_native_local_still_routes_to_wrapper(
     )
 
     assert captured["session_id"] == "conv_claude"
-    assert captured["server"] is None
+    assert captured["server"] == "http://127.0.0.1:8123"
     assert captured["claude_args"] == ()
 
 
