@@ -872,14 +872,7 @@ def test_polly_falls_back_to_codex_subscription_when_claude_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Codex-subscription-only users can still launch Polly locally.
-
-    Polly's bundled brain is Claude SDK, but a local checkout may have no
-    Claude credential and only a logged-in Codex CLI subscription. In that
-    shape, the shorthand should launch Polly through the headless Codex
-    app-server harness for this run, without persisting a global default or
-    drifting into the OpenAI-Agents API-key/Databricks path.
-    """
+    """Codex-subscription-only users can still launch Polly locally."""
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr("omnigent.onboarding.detected.detect_providers", list)
     monkeypatch.setattr("omnigent.cli._load_effective_config", dict)
@@ -899,7 +892,50 @@ def test_polly_falls_back_to_codex_subscription_when_claude_unavailable(
     result = CliRunner().invoke(cli, ["polly", "-p", "do the work"])
 
     assert result.exit_code == 0, result.output
-    assert "using the logged-in Codex CLI subscription" in result.output
+    assert "Using the logged-in Codex CLI subscription for polly" in result.output
+    dispatch.assert_called_once()
+    kwargs = dispatch.call_args.kwargs
+    assert kwargs["target"] == _bundled_example_path("polly")
+    assert kwargs["harness"] == "codex"
+    assert kwargs["prompt"] == "do the work"
+
+
+def test_polly_prefers_codex_subscription_over_configured_claude_brain(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Polly can avoid a configured-but-unusable Claude subscription.
+
+    Polly's bundled brain is Claude SDK, but a local checkout may have no
+    available Claude quota while Codex is still usable. A logged-in Codex
+    subscription should therefore be the Polly shorthand's ephemeral harness
+    override even when a Claude subscription provider is also configured.
+    """
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr("omnigent.onboarding.detected.detect_providers", list)
+    monkeypatch.setattr("omnigent.cli._load_effective_config", dict)
+    _write_isolated_provider_config(
+        tmp_path,
+        {
+            "codex": {
+                "kind": "subscription",
+                "cli": "codex",
+                "default": ["openai"],
+            },
+            "claude": {
+                "kind": "subscription",
+                "cli": "claude",
+                "default": ["anthropic"],
+            },
+        },
+    )
+    dispatch = Mock()
+    monkeypatch.setattr("omnigent.cli._dispatch_run", dispatch)
+
+    result = CliRunner().invoke(cli, ["polly", "-p", "do the work"])
+
+    assert result.exit_code == 0, result.output
+    assert "Using the logged-in Codex CLI subscription for polly" in result.output
     dispatch.assert_called_once()
     kwargs = dispatch.call_args.kwargs
     assert kwargs["target"] == _bundled_example_path("polly")
