@@ -4668,6 +4668,46 @@ def _ensure_bundled_agent_brain_credential(name: str) -> None:
         return
 
 
+def _run_args_include_harness(run_args: tuple[str, ...] | list[str]) -> bool:
+    """Return whether pass-through ``run`` args explicitly choose a harness."""
+    return any(arg == "--harness" or arg.startswith("--harness=") for arg in run_args)
+
+
+def _bundled_agent_codex_subscription_fallback_harness(name: str) -> str | None:
+    """Return an ephemeral Codex harness override for a bundled agent.
+
+    Polly's bundled brain is Claude SDK, but local users may have only a
+    subscription-backed Codex CLI configured. In that shape, launch Polly with
+    the headless Codex app-server harness for this run instead of falling
+    through to the Claude brain's credential error or forcing users toward the
+    OpenAI-Agents API-key/Databricks path.
+
+    This never persists a default and never overrides an explicit
+    ``--harness``.
+    """
+    from omnigent.errors import OmnigentError
+    from omnigent.onboarding.detected import effective_config_with_detected
+    from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+
+    brain_harness = _bundled_agent_brain_harness(name)
+    if brain_harness != "claude-sdk":
+        return None
+    try:
+        config = effective_config_with_detected(load_config())
+        if default_provider_for_harness(config, brain_harness) is not None:
+            return None
+        codex_provider = default_provider_for_harness(config, "codex")
+    except (OSError, yaml.YAMLError, OmnigentError):
+        return None
+    if (
+        codex_provider is not None
+        and codex_provider.kind == "subscription"
+        and codex_provider.cli == "codex"
+    ):
+        return "codex"
+    return None
+
+
 @cli.command(
     context_settings={
         "ignore_unknown_options": True,
@@ -5286,11 +5326,21 @@ def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
     # Polly/Debby launch with the first available credential for their
     # brain's family when no specific one is configured up front (#334).
     _ensure_bundled_agent_brain_credential(name)
+    forwarded_args = list(run_args)
+    if not _run_args_include_harness(forwarded_args):
+        fallback_harness = _bundled_agent_codex_subscription_fallback_harness(name)
+        if fallback_harness is not None:
+            forwarded_args = ["--harness", fallback_harness, *forwarded_args]
+            click.echo(
+                f"No Claude credential configured for {name} — using the "
+                "logged-in Codex CLI subscription for this run.",
+                err=True,
+            )
     # standalone_mode=False propagates ClickExceptions to main()'s handler
     # (CLI diagnostics logging + setup hint) instead of exiting inline,
     # matching the outer `cli(args=argv, standalone_mode=False)` dispatch.
     run.main(
-        args=[_bundled_example_path(name), *run_args],
+        args=[_bundled_example_path(name), *forwarded_args],
         prog_name="omnigent run",
         standalone_mode=False,
     )
