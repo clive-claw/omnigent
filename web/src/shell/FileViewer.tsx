@@ -83,6 +83,7 @@ import {
   type SaveStatus,
   detectLang,
   isImageFile,
+  isNotebookFile,
   openHtmlArtifactInNewTab,
 } from "./codeViewerHelpers";
 import { CommentsPanel, type ActiveSelection } from "./CommentsPanel";
@@ -598,7 +599,8 @@ function FileViewerBody({
 
   // View mode toggle — preview is the default for md/html, source for everything else.
   const lang = detectLang(path);
-  const isPreviewable = lang === "markdown" || lang === "html";
+  const isNotebook = isNotebookFile(path);
+  const isPreviewable = lang === "markdown" || lang === "html" || isNotebook;
   // Images render through CodeViewer's <ImageViewer> regardless of view mode;
   // they have no source/diff representation, so diff is suppressed for them
   // (Monaco would otherwise render the base64 payload as garbage text).
@@ -639,7 +641,7 @@ function FileViewerBody({
   useEffect(() => {
     writeFileViewPreferences({ diffActive, diffLayout, previewableViewMode, hideWhitespace });
   }, [diffActive, diffLayout, previewableViewMode, hideWhitespace]);
-  // Non-markdown previewable (HTML): "editor" falls back to "preview" — no rich-text mode.
+  // Non-markdown previewable (HTML/notebook): "editor" falls back to "preview" — no rich-text mode.
   // Markdown: "preview" is removed; treat as "source" if somehow set (e.g. shared state from an HTML file).
   const fileViewMode: "editor" | "preview" | "source" = isPreviewable
     ? lang !== "markdown" && previewableViewMode === "editor"
@@ -747,7 +749,7 @@ function FileViewerBody({
             setPreviewableViewMode((mode) => (mode === "editor" ? "source" : "editor")),
           );
         } else {
-          setPreviewableViewMode((mode) => (mode === "preview" ? "source" : "preview"));
+          setPreviewableViewMode(viewMode === "preview" ? "source" : "preview");
         }
       },
     });

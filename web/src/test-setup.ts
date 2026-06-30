@@ -1,6 +1,64 @@
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 
+// Node 26 exposes an experimental global `localStorage` only when launched with
+// `--localstorage-file`; jsdom still provides the browser storage object on
+// `window`. Many tests intentionally use the browser-global shorthand, so bind
+// it to jsdom's Storage implementation instead of Node's process-level one.
+function resolveTestLocalStorage(): Storage {
+  try {
+    if (window.localStorage) return window.localStorage;
+  } catch {
+    // Fall through to the in-memory test implementation below.
+  }
+
+  class MemoryStorage implements Storage {
+    private readonly store = new Map<string, string>();
+
+    get length() {
+      return this.store.size;
+    }
+
+    clear() {
+      this.store.clear();
+    }
+
+    getItem(key: string) {
+      return this.store.get(String(key)) ?? null;
+    }
+
+    key(index: number) {
+      return Array.from(this.store.keys())[index] ?? null;
+    }
+
+    removeItem(key: string) {
+      this.store.delete(String(key));
+    }
+
+    setItem(key: string, value: string) {
+      this.store.set(String(key), String(value));
+    }
+  }
+
+  Object.defineProperty(globalThis, "Storage", {
+    configurable: true,
+    writable: true,
+    value: MemoryStorage,
+  });
+  return new MemoryStorage();
+}
+
+const testLocalStorage = resolveTestLocalStorage();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  writable: true,
+  value: testLocalStorage,
+});
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: testLocalStorage,
+});
+
 // The @lobehub icon packages have broken nested-module resolution
 // under vitest; stub presentational glyphs so component modules that
 // import them can still load in tests. (The Antigravity glyph additionally
