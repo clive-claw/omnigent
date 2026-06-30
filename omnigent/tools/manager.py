@@ -153,6 +153,7 @@ class ToolManager:
         self._register_agent_mgmt_tools()
         self._register_os_env_tools()
         self._register_terminal_tools()
+        self._register_browser_tools()
         self._register_local_tools(workdir)
         self._register_client_tools(client_tool_specs or [])
         # Step 11a: register the async-dispatch builtins
@@ -594,6 +595,23 @@ class ToolManager:
             if tool.name() in self._tools:
                 raise ValueError(
                     f"sys_terminal_* tool {tool.name()!r} collides with an "
+                    f"already-registered tool — investigate the offending "
+                    f"earlier registration."
+                )
+            self._tools[tool.name()] = tool
+
+    def _register_browser_tools(self) -> None:
+        """
+        Register ``sys_browser_*`` tools when the spec opts in with ``browser: true``.
+        """
+        if not self._spec.browser:
+            return
+        from omnigent.tools.builtins.sys_browser import build_browser_tools
+
+        for tool in build_browser_tools():
+            if tool.name() in self._tools:
+                raise ValueError(
+                    f"sys_browser_* tool {tool.name()!r} collides with an "
                     f"already-registered tool — investigate the offending "
                     f"earlier registration."
                 )

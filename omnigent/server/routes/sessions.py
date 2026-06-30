@@ -16557,6 +16557,26 @@ def create_sessions_router(
             ) from exc
         return resp.status_code, resp.json()
 
+    async def _proxy_binary_get_to_runner(
+        session_id: str,
+        path: str,
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """Proxy a binary GET request to the runner."""
+        runner_client = await _get_runner_client_for_resource_access(session_id)
+        if runner_client is None:
+            raise HTTPException(
+                status_code=502,
+                detail="no runner available for resource access",
+            )
+        try:
+            return await runner_client.get(path, params=params, timeout=10.0)
+        except (httpx.HTTPError, ConnectionError) as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="runner resource endpoint unavailable",
+            ) from exc
+
     async def _proxy_put_to_runner(
         session_id: str,
         path: str,
@@ -16701,6 +16721,24 @@ def create_sessions_router(
         }
         return await _proxy_get_to_runner(session_id, path, params=forwarded or None)
 
+    @router.get(
+        "/sessions/{session_id}/resources/browsers",
+        response_model=None,
+    )
+    async def list_session_browsers(
+        request: Request,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Return only browser resources for a session."""
+        await _validate_session(session_id, request, LEVEL_READ)
+        path = f"/v1/sessions/{session_id}/resources/browsers"
+        forwarded = {
+            key: value
+            for key, value in request.query_params.items()
+            if key in ("limit", "after", "before", "order")
+        }
+        return await _proxy_get_to_runner(session_id, path, params=forwarded or None)
+
     @router.post(
         "/sessions/{session_id}/resources/terminals",
         response_model=None,
@@ -16780,6 +16818,114 @@ def create_sessions_router(
             resource_type="terminal",
             conversation_store=conversation_store,
             resource=payload,
+        )
+        return payload
+
+    @router.post(
+        "/sessions/{session_id}/resources/browsers",
+        response_model=None,
+        dependencies=[Depends(require_json_content_type)],
+    )
+    async def create_session_browser(
+        session_id: str,
+        request: Request,
+    ) -> Any:
+        """Create or return the session's default browser resource."""
+        await _validate_session(session_id, request, LEVEL_EDIT)
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+        path = f"/v1/sessions/{session_id}/resources/browsers"
+        status, payload = await _proxy_post_to_runner(session_id, path, body)
+        if status >= 400:
+            error = payload.get("error", {})
+            raise OmnigentError(
+                error.get("message", f"Browser creation failed (runner returned HTTP {status})"),
+                code=error.get("code", ErrorCode.INTERNAL_ERROR),
+            )
+        _publish_and_persist_resource_event(
+            session_id,
+            "session.resource.created",
+            resource_id=payload.get("id", ""),
+            resource_type="browser",
+            conversation_store=conversation_store,
+            resource=payload,
+        )
+        return payload
+
+    @router.get(
+        "/sessions/{session_id}/resources/browsers/{browser_id}",
+        response_model=None,
+    )
+    async def get_session_browser(
+        request: Request,
+        session_id: str,
+        browser_id: str,
+    ) -> dict[str, Any]:
+        """Return a single browser resource by id."""
+        await _validate_session(session_id, request, LEVEL_READ)
+        path = f"/v1/sessions/{session_id}/resources/browsers/{browser_id}"
+        return await _proxy_get_to_runner(session_id, path)
+
+    @router.get(
+        "/sessions/{session_id}/resources/browsers/{browser_id}/screenshot",
+        response_model=None,
+    )
+    async def get_session_browser_screenshot(
+        request: Request,
+        session_id: str,
+        browser_id: str,
+    ) -> Response:
+        """Proxy browser screenshot PNG bytes through authenticated server routes."""
+        await _validate_session(session_id, request, LEVEL_READ)
+        path = f"/v1/sessions/{session_id}/resources/browsers/{browser_id}/screenshot"
+        forwarded = {"v": request.query_params["v"]} if "v" in request.query_params else None
+        resp = await _proxy_binary_get_to_runner(session_id, path, params=forwarded)
+        if resp.status_code == 404:
+            raise OmnigentError(
+                resp.json().get("error", {}).get("message", "Browser screenshot not found"),
+                code=ErrorCode.NOT_FOUND,
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="runner browser screenshot failed")
+        if len(resp.content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=502, detail="runner browser screenshot too large")
+        content_type = resp.headers.get("content-type", "").split(";", 1)[0].lower()
+        if content_type != "image/png":
+            raise HTTPException(status_code=502, detail="runner browser screenshot was not PNG")
+        return Response(
+            content=resp.content,
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.delete(
+        "/sessions/{session_id}/resources/browsers/{browser_id}",
+        response_model=None,
+    )
+    async def delete_session_browser(
+        request: Request,
+        session_id: str,
+        browser_id: str,
+    ) -> Any:
+        """Close a browser resource."""
+        await _validate_session(session_id, request, LEVEL_EDIT)
+        path = f"/v1/sessions/{session_id}/resources/browsers/{browser_id}"
+        status, payload = await _proxy_delete_to_runner(session_id, path)
+        if status == 404:
+            error = payload.get("error", {})
+            raise OmnigentError(
+                error.get("message", "Browser not found"),
+                code=ErrorCode.NOT_FOUND,
+            )
+        if status >= 400:
+            raise HTTPException(status_code=502, detail="runner browser delete failed")
+        _publish_and_persist_resource_event(
+            session_id,
+            "session.resource.deleted",
+            resource_id=browser_id,
+            resource_type="browser",
+            conversation_store=conversation_store,
         )
         return payload
 

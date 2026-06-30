@@ -74,6 +74,7 @@ import { parseEvent, parseSseStream, type SseStreamResult } from "@/lib/sse";
 import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
 import { useTerminalActivityStore } from "./terminalActivity";
+import { browserInfoFromResource, browsersQueryKey, type BrowserInfo } from "@/hooks/useBrowsers";
 import {
   terminalInfoFromResource,
   terminalsQueryKey,
@@ -3102,6 +3103,7 @@ export async function pumpStreamEvents(
         const convId = get().conversationId;
         if (convId) {
           queryClient?.invalidateQueries({ queryKey: ["conversation", convId, "items"] });
+          queryClient?.invalidateQueries({ queryKey: browsersQueryKey(convId) });
           // No terminals invalidation: the list is SSE-sourced (see
           // useTerminals). Its query has only an empty seed queryFn, so
           // invalidating would refetch [] and wipe the live list. The
@@ -3832,11 +3834,15 @@ export function handleSessionEvent(event: StreamEvent): void {
     case "session_resource_created":
       if (event.resource.type === "terminal") {
         applyTerminalCreated(event.resource as unknown as Record<string, unknown>);
+      } else if (event.resource.type === "browser") {
+        applyBrowserCreated(event.resource as unknown as Record<string, unknown>);
       }
       return;
     case "session_resource_deleted":
       if (event.resourceType === "terminal") {
         applyTerminalDeleted(event.sessionId, event.resourceId);
+      } else if (event.resourceType === "browser") {
+        applyBrowserDeleted(event.sessionId, event.resourceId);
       }
       return;
     case "session_child_session_updated":
@@ -4000,6 +4006,34 @@ function applyTerminalDeleted(sessionId: string, resourceId: string): void {
   const next = current.filter((t) => t.id !== resourceId);
   if (next.length === current.length) return;
   queryClient.setQueryData<TerminalInfo[]>(key, next);
+}
+
+function applyBrowserCreated(resource: Record<string, unknown>): void {
+  const sessionId = resource.session_id;
+  if (typeof sessionId !== "string" || !sessionId) return;
+  const info = browserInfoFromResource(resource);
+  if (info === null) return;
+  if (queryClient === null) return;
+  const key = browsersQueryKey(sessionId);
+  const current = queryClient.getQueryData<BrowserInfo[]>(key) ?? [];
+  const idx = current.findIndex((browser) => browser.id === info.id);
+  if (idx === -1) {
+    queryClient.setQueryData<BrowserInfo[]>(key, [...current, info]);
+    return;
+  }
+  const next = [...current];
+  next[idx] = info;
+  queryClient.setQueryData<BrowserInfo[]>(key, next);
+}
+
+function applyBrowserDeleted(sessionId: string, resourceId: string): void {
+  if (queryClient === null) return;
+  const key = browsersQueryKey(sessionId);
+  const current = queryClient.getQueryData<BrowserInfo[]>(key);
+  if (current === undefined) return;
+  const next = current.filter((browser) => browser.id !== resourceId);
+  if (next.length === current.length) return;
+  queryClient.setQueryData<BrowserInfo[]>(key, next);
 }
 
 /**

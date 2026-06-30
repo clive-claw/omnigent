@@ -18,6 +18,9 @@ vi.mock("./FilesPanel", () => ({
 vi.mock("./InlineTerminalsSection", () => ({
   InlineTerminalsSection: () => <div data-testid="terminals-stub" />,
 }));
+vi.mock("./BrowserPanel", () => ({
+  BrowserPanel: () => <div data-testid="browser-stub" />,
+}));
 vi.mock("./SubagentsPanel", () => ({
   SubagentsPanel: () => <div data-testid="subagents-stub" />,
 }));
@@ -56,6 +59,8 @@ function renderWorkspace(
       changedCount={0}
       showShellsTab={false}
       terminalsLength={0}
+      showBrowserTab={false}
+      browsers={[]}
       subagentsWorking={0}
       agentCount={1}
       isClaudeNative={false}

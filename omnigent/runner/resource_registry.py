@@ -17,7 +17,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -27,7 +27,10 @@ from cachetools import TTLCache
 from omnigent.entities.pagination import PagedList
 from omnigent.entities.session_resources import (
     DEFAULT_ENVIRONMENT_ID,
+    BrowserResourceState,
     SessionResourceView,
+    browser_resource_id,
+    browser_resource_view,
     filter_resources_by_type,
     get_resource_by_id,
     list_session_resources_from_terminal_registry,
@@ -272,6 +275,7 @@ class SessionResourceRegistry:
         self._runner_workspace = runner_workspace
         self._per_session_workspace = per_session_workspace
         self._primary_envs: dict[str, OSEnvironment] = {}
+        self._browser_states: dict[str, BrowserResourceState] = {}
         self._terminal_roles: dict[tuple[str, str], str] = {}
         self._terminal_lifecycles: dict[tuple[str, str], TerminalLifecycle] = {}
         self._is_alive_cache: TTLCache[str, bool] = TTLCache(
@@ -429,7 +433,7 @@ class SessionResourceRegistry:
         self,
         session_id: str,
         *,
-        resource_type: Literal["environment", "terminal", "file"] | None = None,
+        resource_type: Literal["environment", "terminal", "file", "browser"] | None = None,
         agent_spec: Any | None = None,
     ) -> PagedList[SessionResourceView]:
         """List all resources for a session.
@@ -458,6 +462,15 @@ class SessionResourceRegistry:
             has_os_env=has_os_env,
             primary_os_env_spec=primary_os_env_spec,
         )
+        browser = self.get_browser_resource(session_id)
+        if browser is not None:
+            resources = [*page.data, browser]
+            page = PagedList(
+                data=resources,
+                first_id=resources[0].id if resources else None,
+                last_id=resources[-1].id if resources else None,
+                has_more=False,
+            )
         if resource_type is not None:
             return filter_resources_by_type(page, resource_type)
         return page
@@ -474,11 +487,69 @@ class SessionResourceRegistry:
             e.g. ``"default"`` or ``"terminal_bash_s1"``.
         :returns: The matching resource or ``None``.
         """
-        page = list_session_resources_from_terminal_registry(
-            session_id,
-            self._terminal_registry,
-        )
+        page = self.list_resources(session_id)
         return get_resource_by_id(page, resource_id)
+
+    def create_browser_resource(self, session_id: str) -> SessionResourceView:
+        """Create or return the session's default browser resource."""
+        now = time.time()
+        with self._lock:
+            state = self._browser_states.get(session_id)
+            if state is None:
+                state = BrowserResourceState(
+                    loading=False,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._browser_states[session_id] = state
+        return browser_resource_view(session_id, state)
+
+    def get_browser_resource(
+        self,
+        session_id: str,
+        browser_id: str | None = None,
+    ) -> SessionResourceView | None:
+        """Return a browser resource view for the session if present."""
+        if browser_id is not None and browser_id != browser_resource_id():
+            return None
+        with self._lock:
+            state = self._browser_states.get(session_id)
+        if state is None:
+            return None
+        return browser_resource_view(session_id, state)
+
+    def update_browser_resource(
+        self,
+        session_id: str,
+        **changes: object,
+    ) -> SessionResourceView:
+        """Create or update the session browser metadata."""
+        now = time.time()
+        allowed = {
+            "url",
+            "title",
+            "loading",
+            "error",
+            "screenshot_version",
+            "created_at",
+            "updated_at",
+        }
+        clean_changes = {key: value for key, value in changes.items() if key in allowed}
+        with self._lock:
+            state = self._browser_states.get(session_id)
+            if state is None:
+                state = BrowserResourceState(created_at=now, updated_at=now)
+            clean_changes["updated_at"] = now
+            state = replace(state, **clean_changes)
+            self._browser_states[session_id] = state
+        return browser_resource_view(session_id, state)
+
+    async def close_browser(self, session_id: str, browser_id: str) -> bool:
+        """Close and remove the session browser resource."""
+        if browser_id != browser_resource_id():
+            return False
+        with self._lock:
+            return self._browser_states.pop(session_id, None) is not None
 
     async def get_terminal_resource(
         self,
@@ -1314,6 +1385,7 @@ class SessionResourceRegistry:
         self._take_session_status_memo(session_id)
         with self._lock:
             primary = self._primary_envs.pop(session_id, None)
+            self._browser_states.pop(session_id, None)
             stale_role_keys = [key for key in self._terminal_roles if key[0] == session_id]
             for key in stale_role_keys:
                 self._terminal_roles.pop(key, None)

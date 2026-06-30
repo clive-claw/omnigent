@@ -148,6 +148,7 @@ kubernetes = ["kubernetes>=36,<37"]
 # are in the default install). `omnigent[tracing]` still works — it just
 # no longer pulls in the heavy mlflow dependency.
 tracing = []
+browser = ["playwright>=1.45,<2"]
 agents-sdk = [
     "openai-agents>=0.1,<1",
     "opentelemetry-instrumentation-openai-agents-v2>=0.1",

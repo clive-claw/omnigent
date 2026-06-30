@@ -206,6 +206,10 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # opt into the timer surface explicitly. See step 10 of the
     # harness contract migration.
     timers = bool(raw.get("timers", False))
+    # Top-level ``browser:`` flag gates the LLM-callable browser
+    # builtins. Browser automation can navigate external sites and
+    # therefore stays default-off until an agent explicitly opts in.
+    browser = bool(raw.get("browser", False))
     # Top-level ``spawn:`` flag grants spawning OUTSIDE any declared
     # sub-agent list: ``sys_session_create`` (existing agents by id,
     # or custom bundles via config_path) plus send/close to drive the
@@ -257,6 +261,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         timers=timers,
         spawn=spawn,
         agent_session_sharing=agent_session_sharing,
+        browser=browser,
     )
 
 

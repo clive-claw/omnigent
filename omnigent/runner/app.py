@@ -15299,7 +15299,7 @@ def create_runner_app(
 
         :param session_id: Session/conversation identifier.
         :param resource_type: One of ``"environment"``,
-            ``"terminal"``, or ``"file"``.
+            ``"terminal"``, ``"file"``, or ``"browser"``.
         :param limit: Max resources to return.
         :param after: Cursor resource id.
         :param before: Cursor resource id.
@@ -15431,6 +15431,24 @@ def create_runner_app(
         return _build_typed_list_response(
             session_id,
             "terminal",
+            limit=limit,
+            after=after,
+            before=before,
+            order=order,
+        )
+
+    @app.get("/v1/sessions/{session_id}/resources/browsers")
+    async def list_session_browsers(
+        session_id: str,
+        limit: int = Query(default=20, ge=1, le=1000),
+        after: str | None = Query(default=None),
+        before: str | None = Query(default=None),
+        order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    ) -> JSONResponse:
+        """Return only browser resources for a session."""
+        return _build_typed_list_response(
+            session_id,
+            "browser",
             limit=limit,
             after=after,
             before=before,
@@ -16078,6 +16096,106 @@ def create_runner_app(
         return JSONResponse(
             status_code=200,
             content=session_resource_view_to_dict(resource_view),
+        )
+
+    @app.post("/v1/sessions/{session_id}/resources/browsers")
+    async def create_session_browser(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        """Create or return the session's default browser resource."""
+        content_type = request.headers.get("content-type", "")
+        if "application/json" not in content_type.lower():
+            return JSONResponse(
+                status_code=415,
+                content={
+                    "error": {
+                        "code": "unsupported_media_type",
+                        "message": "Browser resource creation requires application/json",
+                    }
+                },
+            )
+        resource = resource_registry.create_browser_resource(session_id)
+        return JSONResponse(
+            status_code=200,
+            content=session_resource_view_to_dict(resource),
+        )
+
+    @app.get("/v1/sessions/{session_id}/resources/browsers/{browser_id}")
+    async def get_session_browser(
+        session_id: str,
+        browser_id: str,
+    ) -> JSONResponse:
+        """Return a single browser resource by id."""
+        resource = resource_registry.get_browser_resource(session_id, browser_id)
+        if resource is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "code": "not_found",
+                        "message": f"Browser {browser_id!r} not found",
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content=session_resource_view_to_dict(resource),
+        )
+
+    @app.delete("/v1/sessions/{session_id}/resources/browsers/{browser_id}")
+    async def delete_session_browser(
+        session_id: str,
+        browser_id: str,
+    ) -> JSONResponse:
+        """Close a browser resource."""
+        closed = await resource_registry.close_browser(session_id, browser_id)
+        if not closed:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "code": "not_found",
+                        "message": f"Browser {browser_id!r} not found",
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "id": browser_id,
+                "object": "session.resource.deleted",
+                "deleted": True,
+            },
+        )
+
+    @app.get("/v1/sessions/{session_id}/resources/browsers/{browser_id}/screenshot")
+    async def get_session_browser_screenshot(
+        session_id: str,
+        browser_id: str,
+        v: int | None = Query(default=None),
+    ) -> JSONResponse:
+        """Return the current browser screenshot when one exists."""
+        del v
+        resource = resource_registry.get_browser_resource(session_id, browser_id)
+        if resource is None or resource.metadata.get("screenshot_version") is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "code": "not_found",
+                        "message": f"Browser screenshot {browser_id!r} not found",
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "code": "not_found",
+                    "message": f"Browser screenshot {browser_id!r} not found",
+                }
+            },
         )
 
     @app.get("/v1/sessions/{session_id}/resources/terminals/{terminal_id}")

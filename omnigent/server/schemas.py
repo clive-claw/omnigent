@@ -524,7 +524,7 @@ class SessionResourceObject(BaseModel):
         ``"terminal_bash_s1"``.
     :param object: Fixed resource type, always ``"session.resource"``.
     :param type: Resource kind, initially ``"environment"``,
-        ``"terminal"``, or ``"file"``.
+        ``"terminal"``, ``"file"``, or ``"browser"``.
     :param session_id: Owning session/conversation id.
     :param name: Human-readable display name. Not required to be
         globally unique.
@@ -535,7 +535,7 @@ class SessionResourceObject(BaseModel):
 
     id: str
     object: Literal["session.resource"]
-    type: Literal["environment", "terminal", "file"]
+    type: Literal["environment", "terminal", "file", "browser"]
     session_id: str
     name: str
     metadata: dict[str, Any] = Field(default_factory=dict)

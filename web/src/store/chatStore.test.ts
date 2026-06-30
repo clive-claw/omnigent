@@ -43,6 +43,8 @@ import type {
 } from "@/lib/events";
 import type { TerminalInfo } from "@/hooks/useTerminals";
 import { terminalsQueryKey } from "@/hooks/useTerminals";
+import type { BrowserInfo } from "@/hooks/useBrowsers";
+import { browsersQueryKey } from "@/hooks/useBrowsers";
 import { type ChildSessionInfo, childSessionsQueryKey } from "@/hooks/useChildSessions";
 import {
   consumePendingInitialPrompt,
@@ -4041,6 +4043,28 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
     };
   }
 
+  function makeBrowserResource(
+    id: string,
+    overrides?: { url?: string | null; title?: string | null; screenshotVersion?: number | null },
+  ): Record<string, unknown> {
+    return {
+      id,
+      object: "session.resource",
+      type: "browser",
+      session_id: "conv_abc",
+      name: "Browser",
+      metadata: {
+        url: overrides?.url ?? "http://localhost:3000/app",
+        title: overrides?.title ?? "Local app",
+        loading: false,
+        error: null,
+        screenshot_version: overrides?.screenshotVersion ?? 4,
+        created_at: 10,
+        updated_at: 12,
+      },
+    };
+  }
+
   describe("session.resource.created (terminal)", () => {
     it("appends a new terminal to the cached list", () => {
       client.setQueryData<TerminalInfo[]>(terminalsQueryKey("conv_abc"), []);
@@ -4147,6 +4171,85 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
         sessionId: "conv_abc",
       });
       expect(client.getQueryData<TerminalInfo[]>(terminalsQueryKey("conv_abc"))).toEqual(initial);
+    });
+  });
+
+  describe("session.resource.created/deleted (browser)", () => {
+    it("appends a browser to the cached list", () => {
+      client.setQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"), []);
+      const event: SessionResourceCreatedEvent = {
+        type: "session_resource_created",
+        resource: makeBrowserResource("browser_default") as never,
+      };
+
+      handleSessionEvent(event);
+
+      const cached = client.getQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"));
+      expect(cached).toEqual([
+        {
+          id: "browser_default",
+          url: "http://localhost:3000/app",
+          title: "Local app",
+          loading: false,
+          error: null,
+          screenshotVersion: 4,
+          createdAt: 10,
+          updatedAt: 12,
+        },
+      ]);
+    });
+
+    it("replaces an existing browser resource on duplicate create", () => {
+      client.setQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"), [
+        {
+          id: "browser_default",
+          url: "http://localhost:3000/old",
+          title: "Old",
+          loading: false,
+          error: null,
+          screenshotVersion: 1,
+          createdAt: 10,
+          updatedAt: 11,
+        },
+      ]);
+
+      handleSessionEvent({
+        type: "session_resource_created",
+        resource: makeBrowserResource("browser_default", {
+          url: "http://localhost:3000/new",
+          title: "New",
+          screenshotVersion: 2,
+        }) as never,
+      });
+
+      const cached = client.getQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"));
+      expect(cached?.[0]?.url).toBe("http://localhost:3000/new");
+      expect(cached?.[0]?.title).toBe("New");
+      expect(cached?.[0]?.screenshotVersion).toBe(2);
+    });
+
+    it("removes a deleted browser from the cached list", () => {
+      client.setQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"), [
+        {
+          id: "browser_default",
+          url: "http://localhost:3000/app",
+          title: "Local app",
+          loading: false,
+          error: null,
+          screenshotVersion: 4,
+          createdAt: 10,
+          updatedAt: 12,
+        },
+      ]);
+
+      handleSessionEvent({
+        type: "session_resource_deleted",
+        resourceId: "browser_default",
+        resourceType: "browser",
+        sessionId: "conv_abc",
+      });
+
+      expect(client.getQueryData<BrowserInfo[]>(browsersQueryKey("conv_abc"))).toEqual([]);
     });
   });
 
@@ -5294,6 +5397,7 @@ describe("chatStore — pumpStreamEvents frame batching", () => {
       activeResponse: null,
       status: "idle",
     });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
     const sink = pushableStream();
     const controller = new AbortController();
     const manual = manualScheduler();
@@ -5344,6 +5448,7 @@ describe("chatStore — pumpStreamEvents frame batching", () => {
     // the response_end branch ran after the buffer was flushed.
     expect(useChatStore.getState().activeResponse?.state).toBe("completed");
     expect(useChatStore.getState().status).toBe("idle");
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: browsersQueryKey("conv_life") });
 
     controller.abort();
   });

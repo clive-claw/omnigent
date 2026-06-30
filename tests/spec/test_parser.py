@@ -2427,6 +2427,30 @@ def test_parse_timers_true_sets_flag(tmp_path: Path) -> None:
     assert spec.timers is True
 
 
+def test_parse_browser_defaults_to_false_when_omitted(agent_dir: Path) -> None:
+    """
+    Without a top-level ``browser:`` key the parsed ``AgentSpec.browser``
+    is ``False`` so browser automation remains explicit opt-in.
+
+    :param agent_dir: Temporary agent directory fixture.
+    """
+    spec = parse(agent_dir)
+    assert spec.browser is False
+
+
+def test_parse_browser_true_sets_flag(tmp_path: Path) -> None:
+    """
+    ``browser: true`` in config.yaml round-trips to
+    ``AgentSpec.browser == True``.
+
+    :param tmp_path: pytest-provided temporary directory.
+    """
+    config = {"spec_version": 1, "name": "browser-agent", "browser": True}
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    spec = parse(tmp_path)
+    assert spec.browser is True
+
+
 # ─── Top-level ``spawn:`` flag (spawn-write opt-in) ───────────
 
 

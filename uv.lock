@@ -2833,6 +2833,9 @@ bedrock = [
 boxlite = [
     { name = "boxlite" },
 ]
+browser = [
+    { name = "playwright" },
+]
 copilot = [
     { name = "github-copilot-sdk" },
 ]
@@ -2942,6 +2945,7 @@ requires-dist = [
     { name = "packaging", specifier = ">=23,<26" },
     { name = "pathspec", marker = "extra == 'dev'", specifier = ">=0.12" },
     { name = "pexpect", marker = "sys_platform != 'win32'", specifier = ">=4.9,<5" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.45,<2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "prompt-toolkit", specifier = ">=3.0,<4" },
     { name = "psutil", specifier = ">=5.9,<8" },
@@ -2971,7 +2975,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
     { name = "websockets", specifier = ">=10.4,<15" },
 ]
-provides-extras = ["claude-sdk", "openai-agents", "all", "bedrock", "s3", "vertex", "modal", "daytona", "boxlite", "cwsandbox", "e2b", "openshell", "kubernetes", "tracing", "agents-sdk", "antigravity", "copilot", "cursor", "databricks", "dev"]
+provides-extras = ["claude-sdk", "openai-agents", "all", "bedrock", "s3", "vertex", "modal", "daytona", "boxlite", "cwsandbox", "e2b", "openshell", "kubernetes", "tracing", "browser", "agents-sdk", "antigravity", "copilot", "cursor", "databricks", "dev"]
 
 [[package]]
 name = "omnigent-client"

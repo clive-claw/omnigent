@@ -80,6 +80,15 @@ from omnigent.tools.builtins.spawn import (
     _HISTORY_DEFAULT_TAIL,
     _clamp_tail_items,
 )
+from omnigent.tools.builtins.sys_browser import (
+    SysBrowserClickTool,
+    SysBrowserCloseTool,
+    SysBrowserKeyTool,
+    SysBrowserOpenTool,
+    SysBrowserScreenshotTool,
+    SysBrowserSnapshotTool,
+    SysBrowserTypeTool,
+)
 from omnigent.tools.builtins.sys_terminal import (
     SysTerminalCloseTool,
     SysTerminalLaunchTool,
@@ -187,7 +196,20 @@ _TERMINAL_TOOLS = frozenset(
     }
 )
 
-# Priority 5e: Async inbox tools — runner-local, backed by
+# Priority 5e: Browser tools — runner-local session browser manager.
+_BROWSER_TOOLS = frozenset(
+    {
+        SysBrowserOpenTool.name(),
+        SysBrowserClickTool.name(),
+        SysBrowserTypeTool.name(),
+        SysBrowserKeyTool.name(),
+        SysBrowserSnapshotTool.name(),
+        SysBrowserScreenshotTool.name(),
+        SysBrowserCloseTool.name(),
+    }
+)
+
+# Priority 5f: Async inbox tools — runner-local, backed by
 # per-session asyncio queues (SESSION_REARCHITECTURE Step 7).
 _ASYNC_INBOX_TOOLS = frozenset(
     {
@@ -304,12 +326,13 @@ _POLICY_TOOLS = frozenset({"sys_add_policy", "sys_policy_registry"})
 # ignore the harness ``tools`` list, so the relay is their ONLY tool
 # surface; this set is the runner-/server-proxied builtin surface that
 # rides through the Omnigent ``/mcp`` endpoint (comment, session read/write,
-# async inbox, task lifecycle, agent-discovery, and terminal families —
+# async inbox, task lifecycle, agent-discovery, terminal, and browser families —
 # the same dispatch posture non-native harnesses get via
 # ``request.tools``). ``sys_terminal_*`` inherits the spec gate for
 # free: the relay only advertises names that ``ToolManager(spec)``
-# actually registered, and terminal tools register only when the spec
-# declares a non-empty ``terminals:`` block.
+# actually registered; terminal tools register only when the spec declares a
+# non-empty ``terminals:`` block, and browser tools register only when the spec
+# opts in with ``browser: true``.
 # ``sys_os_*`` is intentionally excluded: the
 # bridge exposes static ``sys_os_*`` tools and the relay overrides them
 # unconditionally for policy enforcement (independent of the spec's
@@ -325,6 +348,7 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _TERMINAL_TOOLS
+    | _BROWSER_TOOLS
 )
 
 
@@ -447,6 +471,7 @@ _ALL_LOCAL_TOOLS = (
     | _REST_TOOLS
     | _FILE_TOOLS
     | _TERMINAL_TOOLS
+    | _BROWSER_TOOLS
     | _ASYNC_INBOX_TOOLS
     | _SUBAGENT_TOOLS
     | _LIST_MODELS_TOOLS
@@ -4048,6 +4073,16 @@ async def execute_tool(
                 session_inbox=session_inbox,
                 publish_event=publish_event,
             )
+        elif tool_name in _BROWSER_TOOLS:
+            if not getattr(agent_spec, "browser", False):
+                return "Error: browser tools require browser: true in the agent spec"
+            output = await _execute_browser_tool(
+                tool_name,
+                args,
+                resource_registry=resource_registry,
+                conversation_id=conversation_id,
+                publish_event=publish_event,
+            )
         elif tool_name in _ASYNC_INBOX_TOOLS:
             output = await _execute_async_inbox_tool(
                 tool_name,
@@ -4886,6 +4921,130 @@ async def _execute_terminal_tool(
             publish_event=publish_event,
         )
     return output
+
+
+async def _execute_browser_tool(
+    tool_name: str,
+    args: dict[str, Any],
+    *,
+    resource_registry: Any | None,
+    conversation_id: str | None,
+    publish_event: Callable[[str, dict[str, Any]], None] | None,
+) -> str:
+    """Execute resource-backed browser tools on the runner."""
+    if resource_registry is None:
+        return "Error: resource_registry not available in runner"
+    if conversation_id is None:
+        return "Error: conversation_id required for browser tools"
+
+    if tool_name == SysBrowserOpenTool.name():
+        url = args.get("url")
+        if not isinstance(url, str) or not url:
+            return json.dumps({"error": "url is required"})
+        from omnigent.runner.browser_policy import BrowserUrlPolicy
+
+        decision = BrowserUrlPolicy().check_url(
+            url,
+            allow_localhost=True,
+            approved_external_hosts=set(),
+        )
+        if not decision.allowed:
+            return json.dumps(
+                {
+                    "status": "denied",
+                    "url": decision.normalized_url or url,
+                    "origin": decision.origin,
+                    "reason": decision.reason,
+                }
+            )
+        existed = resource_registry.get_browser_resource(conversation_id) is not None
+        resource = resource_registry.update_browser_resource(
+            conversation_id,
+            url=decision.normalized_url,
+            loading=False,
+            error=None,
+        )
+        if publish_event is not None and not existed:
+            from omnigent.entities.session_resources import session_resource_view_to_dict
+
+            publish_event(
+                conversation_id,
+                {
+                    "type": "session.resource.created",
+                    "session_id": conversation_id,
+                    "resource_id": resource.id,
+                    "resource_type": "browser",
+                    "resource": session_resource_view_to_dict(resource),
+                },
+            )
+        return json.dumps(
+            {
+                "status": "opened",
+                "browser_id": resource.id,
+                "url": decision.normalized_url,
+                "origin": decision.origin,
+            }
+        )
+
+    if tool_name in {
+        SysBrowserClickTool.name(),
+        SysBrowserTypeTool.name(),
+        SysBrowserKeyTool.name(),
+    }:
+        return (
+            "Error: browser page interaction requires the Playwright browser "
+            "manager, which is not implemented in this build"
+        )
+
+    if tool_name == SysBrowserSnapshotTool.name():
+        resource = resource_registry.get_browser_resource(conversation_id)
+        if resource is None:
+            return json.dumps({"error": "browser not open"})
+        return json.dumps(
+            {
+                "browser_id": resource.id,
+                "url": resource.metadata.get("url"),
+                "title": resource.metadata.get("title"),
+                "loading": resource.metadata.get("loading"),
+                "error": resource.metadata.get("error"),
+                "viewport": {
+                    "width": 1280,
+                    "height": 720,
+                    "device_scale_factor": 1,
+                },
+                "elements": [],
+            }
+        )
+
+    if tool_name == SysBrowserScreenshotTool.name():
+        resource = resource_registry.get_browser_resource(conversation_id)
+        if resource is None:
+            return json.dumps({"error": "browser not open"})
+        return json.dumps(
+            {
+                "browser_id": resource.id,
+                "screenshot_version": resource.metadata.get("screenshot_version"),
+                "status": "missing",
+                "error": "screenshot capture requires the Playwright browser manager",
+            }
+        )
+
+    if tool_name == SysBrowserCloseTool.name():
+        browser_id = "browser_default"
+        closed = await resource_registry.close_browser(conversation_id, browser_id)
+        if publish_event is not None and closed:
+            publish_event(
+                conversation_id,
+                {
+                    "type": "session.resource.deleted",
+                    "session_id": conversation_id,
+                    "resource_id": browser_id,
+                    "resource_type": "browser",
+                },
+            )
+        return json.dumps({"browser_id": browser_id, "closed": closed})
+
+    return f"Error: unknown browser tool {tool_name}"
 
 
 async def _emit_terminal_resource_event(

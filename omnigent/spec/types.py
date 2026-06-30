@@ -1494,6 +1494,9 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
         ``non-public`` (grant named users only), or ``public`` (also
         allow ``__public__`` anonymous read). **Defaults to
         ``SharePolicy.NONE``.**
+    :param browser: Whether the LLM-callable browser builtins are
+        registered. YAML key is ``browser:``. **Defaults to
+        ``False``** so browser automation is an explicit opt-in.
     """
 
     spec_version: int
@@ -1540,3 +1543,4 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     timers: bool = False
     spawn: bool = False
     agent_session_sharing: SharePolicy = SharePolicy.NONE
+    browser: bool = False
