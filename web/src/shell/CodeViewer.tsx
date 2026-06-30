@@ -53,12 +53,14 @@ import {
   indexToLine,
   isBinaryPath,
   isImageFile,
+  isNotebookFile,
   lineOverlapsSelection,
   prepareHtmlPreviewDoc,
 } from "./codeViewerHelpers";
 import { renderLineTokens } from "./codeViewerRendering";
 import { TruncatedBanner } from "./TruncatedBanner";
 import { getEmbedRoot } from "@/lib/host";
+import { NotebookPreview } from "./NotebookPreview";
 
 // Monaco is heavy (~MBs + worker); load it only when a non-markdown file is
 // actually viewed, so the initial bundle and markdown/preview paths don't pay
@@ -244,6 +246,7 @@ export function CodeViewer({
   // must drop to read-only when this is set.
   const truncated = fileQuery.data?.truncated ?? false;
   const lang = detectLang(path);
+  const isNotebook = isNotebookFile(path);
   // Non-markdown files render in Monaco (read-only or editable by permission);
   // markdown keeps TipTap (editor) / Shiki (source) and HTML keeps its preview.
   const showMonaco = lang !== "markdown" && viewMode !== "preview";
@@ -497,10 +500,12 @@ export function CodeViewer({
     );
   }
 
-  if (viewMode === "preview" && (lang === "markdown" || lang === "html")) {
+  if (viewMode === "preview" && (lang === "markdown" || lang === "html" || isNotebook)) {
     const preview =
       lang === "markdown" ? (
         <MarkdownPreview content={content} />
+      ) : isNotebook ? (
+        <NotebookPreview content={content} />
       ) : (
         <iframe
           srcDoc={prepareHtmlPreviewDoc(content)}

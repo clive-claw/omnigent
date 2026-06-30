@@ -125,6 +125,10 @@ export function isImageFile(path: string, contentType?: string | null): boolean 
   return IMAGE_EXTENSIONS.has(ext);
 }
 
+export function isNotebookFile(path: string): boolean {
+  return path.split(".").pop()?.toLowerCase() === "ipynb";
+}
+
 export function detectLang(path: string): BundledLanguage | "text" {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, BundledLanguage> = {
@@ -200,6 +204,7 @@ export function detectLang(path: string): BundledLanguage | "text" {
     sql: "sql",
     graphql: "graphql",
     gql: "graphql",
+    ipynb: "json",
     proto: "proto",
     dockerfile: "dockerfile",
     diff: "diff",

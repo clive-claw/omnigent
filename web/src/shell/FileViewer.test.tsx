@@ -23,7 +23,9 @@ import type { Comment } from "@/hooks/useComments";
 // ── Mock heavy child components ───────────────────────────────────────────────
 
 vi.mock("./CodeViewer", () => ({
-  CodeViewer: () => <div data-testid="code-viewer" />,
+  CodeViewer: ({ path, viewMode }: { path: string; viewMode: string }) => (
+    <div data-testid="code-viewer" data-path={path} data-view-mode={viewMode} />
+  ),
 }));
 
 vi.mock("./CommentsPanel", () => ({
@@ -476,6 +478,68 @@ describe("FileViewer URL sync — diff param", () => {
       vi.mocked(useFileDiff).mockReturnValue({
         data: { before: "old", after: "new" },
       } as ReturnType<typeof useFileDiff>);
+    }
+  });
+});
+
+describe("FileViewer notebook preview routing", () => {
+  it("opens .ipynb files in preview mode by default", () => {
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+    renderViewer({ open: true, path: "analysis.ipynb" });
+
+    const viewer = screen.getByTestId("code-viewer");
+    expect(viewer).toHaveAttribute("data-path", "analysis.ipynb");
+    expect(viewer).toHaveAttribute("data-view-mode", "preview");
+    expect(screen.getByRole("button", { name: "View source" })).toBeInTheDocument();
+  });
+
+  it("toggles .ipynb files between notebook preview and raw source", () => {
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+    renderViewer({ open: true, path: "analysis.ipynb" });
+
+    expect(screen.getByTestId("code-viewer")).toHaveAttribute("data-view-mode", "preview");
+
+    fireEvent.click(screen.getByRole("button", { name: "View source" }));
+
+    expect(screen.getByTestId("code-viewer")).toHaveAttribute("data-view-mode", "source");
+    expect(screen.getByRole("button", { name: "View preview" })).toBeInTheDocument();
+  });
+
+  it("keeps diff mode available for changed .ipynb files", async () => {
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+    vi.mocked(useWorkspaceChangedFiles).mockReturnValue({
+      data: {
+        available: true,
+        data: [
+          {
+            path: "analysis.ipynb",
+            bytes: 10,
+            modified_at: null,
+            name: "analysis.ipynb",
+            status: "modified",
+          },
+        ],
+      },
+    } as ReturnType<typeof useWorkspaceChangedFiles>);
+    try {
+      renderViewer({ open: true, path: "analysis.ipynb", initialSearch: "diff=1" });
+      expect(await screen.findByTestId("diff-viewer")).toBeInTheDocument();
+      expect(screen.queryByTestId("code-viewer")).toBeNull();
+    } finally {
+      vi.mocked(useWorkspaceChangedFiles).mockReturnValue({
+        data: {
+          available: true,
+          data: [
+            {
+              path: "file1.py",
+              bytes: 10,
+              modified_at: null,
+              name: "file1.py",
+              status: "modified",
+            },
+          ],
+        },
+      } as ReturnType<typeof useWorkspaceChangedFiles>);
     }
   });
 });

@@ -213,6 +213,11 @@ describe("CodeViewer editor routing", () => {
     // (TipTap handles markdown editing; Monaco is for non-markdown files).
     expect(screen.queryByTestId("monaco-editor-stub")).toBeNull();
   });
+
+  it("routes notebook source mode to the Monaco JSON editor", async () => {
+    renderViewer('{"cells":[]}', true, "analysis.ipynb", { viewMode: "source" });
+    expect(await screen.findByTestId("monaco-editor-stub")).toBeDefined();
+  });
 });
 
 describe("CodeViewer truncated preview", () => {
@@ -253,6 +258,118 @@ describe("CodeViewer HTML preview sandbox", () => {
     expect(sandbox).not.toContain("allow-same-origin");
     // #777: every link opens in a new tab via the injected base tag.
     expect(iframe!.getAttribute("srcdoc")).toContain('<base target="_blank">');
+  });
+});
+
+describe("CodeViewer notebook preview", () => {
+  const pngOutput =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  const svgOutput = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'></svg>";
+
+  function notebook(cells: unknown[]) {
+    return JSON.stringify({
+      cells,
+      metadata: { kernelspec: { language: "python" } },
+      nbformat: 4,
+      nbformat_minor: 5,
+    });
+  }
+
+  it("renders markdown and code cells in notebook preview mode", () => {
+    renderViewer(
+      notebook([
+        { cell_type: "markdown", source: ["# Notebook title\n", "- item"] },
+        { cell_type: "code", execution_count: 3, source: "x = 1\nprint(x)", outputs: [] },
+      ]),
+      true,
+      "analysis.ipynb",
+      { viewMode: "preview" },
+    );
+
+    expect(screen.getByRole("heading", { name: "Notebook title" })).toBeInTheDocument();
+    expect(screen.getByText("In [3]")).toBeInTheDocument();
+    expect(screen.getByText("print(x)")).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-editor-stub")).toBeNull();
+  });
+
+  it("renders common notebook output types", () => {
+    renderViewer(
+      notebook([
+        {
+          cell_type: "code",
+          execution_count: null,
+          source: "run()",
+          outputs: [
+            { output_type: "stream", name: "stdout", text: ["hello\n"] },
+            { output_type: "execute_result", data: { "text/plain": ["42"] } },
+            {
+              output_type: "error",
+              ename: "ValueError",
+              evalue: "bad value",
+              traceback: ["Traceback line"],
+            },
+            { output_type: "display_data", data: { "image/png": pngOutput } },
+            { output_type: "display_data", data: { "image/svg+xml": svgOutput } },
+          ],
+        },
+      ]),
+      true,
+      "analysis.ipynb",
+      { viewMode: "preview" },
+    );
+
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.getByText(/ValueError/)).toBeInTheDocument();
+    const png = screen.getByAltText("Notebook output image/png") as HTMLImageElement;
+    expect(png.getAttribute("src")).toContain(`data:image/png;base64,${pngOutput}`);
+    const svg = screen.getByAltText("Notebook output image/svg+xml") as HTMLImageElement;
+    expect(svg.getAttribute("src")).toBe(
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgOutput)}`,
+    );
+  });
+
+  it("suppresses active HTML outputs instead of rendering them", () => {
+    renderViewer(
+      notebook([
+        {
+          cell_type: "code",
+          source: "display(html)",
+          outputs: [
+            {
+              output_type: "display_data",
+              data: { "text/html": "<div data-testid='unsafe-html'>Unsafe HTML</div>" },
+            },
+          ],
+        },
+      ]),
+      true,
+      "analysis.ipynb",
+      { viewMode: "preview" },
+    );
+
+    expect(screen.getByText("Unsupported notebook output:")).toBeInTheDocument();
+    expect(screen.getByText("text/html")).toBeInTheDocument();
+    expect(screen.queryByTestId("unsafe-html")).toBeNull();
+    expect(screen.queryByText("Unsafe HTML")).toBeNull();
+  });
+
+  it("shows a parse error for invalid notebook JSON", () => {
+    renderViewer("{not json", true, "analysis.ipynb", { viewMode: "preview" });
+    expect(screen.getByText("Unable to parse notebook")).toBeInTheDocument();
+  });
+
+  it("shows an unsupported message for non-notebook JSON", () => {
+    renderViewer('{"not":"a notebook"}', true, "analysis.ipynb", { viewMode: "preview" });
+    expect(screen.getByText("Unsupported notebook")).toBeInTheDocument();
+  });
+
+  it("shows the truncated banner in notebook preview mode", () => {
+    renderViewer(notebook([]), true, "analysis.ipynb", {
+      viewMode: "preview",
+      truncated: true,
+    });
+    expect(screen.getByText(/too large to load fully/)).toBeDefined();
   });
 });
 
