@@ -47,36 +47,27 @@ def run_resume(
     Direct-id form (``target`` provided) is the common CUJ — the user
     knows the conversation they want and types its id; we hit the
     server once for the wrapper label and route to the right wrapper.
-    Picker form (``target`` is None) requires ``--server`` because
-    starting an empty local server just to host the picker would
-    leak state and collide with any other in-flight ``omnigent``
-    process the user has running.
+    Picker form (``target`` is None) reads the local persistent
+    store when ``server`` is ``None``. When ``server`` is set it
+    queries that remote Omnigent server instead.
 
     :param target: Optional conversation id, e.g. ``"conv_abc123"``.
         ``None`` selects the picker form.
-    :param server: Optional remote Omnigent server URL. Required in the
-        picker form (no agent is supplied so we can't bootstrap a
-        local server). For the direct-id form, ``None`` reads the
-        persistent local session store and dispatches to the matching
-        native wrapper.
+    :param server: Optional remote Omnigent server URL. For the picker
+        and direct-id forms, ``None`` reads the persistent local
+        session store and dispatches to the matching native wrapper.
     :returns: None when the dispatched wrapper exits.
-    :raises click.UsageError: When the picker form is invoked
-        without ``--server`` (the user-facing message names both
-        recoverable paths).
     :raises click.ClickException: When the conversation cannot be
         resolved or the dispatched wrapper raises.
     """
     if target is None:
         if server is None:
-            raise click.UsageError(
-                "`omnigent resume` (no id) requires `--server <url>`. "
-                "Pass a conversation id (`omnigent resume conv_...`) "
-                "to use the persistent local store.",
-            )
-        target = _pick_conversation_for_resume(server=server)
+            target = _pick_conversation_for_resume_local()
+        else:
+            target = _pick_conversation_for_resume(server=server)
         if target is None:
             # Picker cancelled (or no prior conversations on this
-            # server). Treat as a clean exit — the user explicitly
+            # store). Treat as a clean exit so the user explicitly
             # chose not to pick anything.
             return
 
@@ -141,6 +132,25 @@ def _pick_conversation_for_resume(
         # other Click handlers don't double-wrap.
         raise click.ClickException(
             f"Picker failed against {base_url!r}: {type(exc).__name__}: {exc}",
+        ) from exc
+
+
+def _pick_conversation_for_resume_local() -> str | None:
+    """
+    Run the cross-agent picker against the local persistent store.
+
+    :returns: Selected conversation id, or ``None`` on cancel.
+    :raises click.ClickException: If the local store cannot be read.
+    """
+    from omnigent.repl._resume_picker import pick_conversation_cross_agent_from_store
+
+    try:
+        return pick_conversation_cross_agent_from_store(_local_conversation_store())
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(
+            f"Local resume picker failed: {type(exc).__name__}: {exc}",
         ) from exc
 
 
@@ -319,14 +329,7 @@ def _read_wrapper_label_local(*, conv_id: str) -> str | None:
     :raises click.ClickException: If the conversation id is not found
         in the local persistent store.
     """
-    from omnigent.chat import _omnigent_persistent_dir
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
-
-    db_path = _omnigent_persistent_dir() / "chat.db"
-    store = SqlAlchemyConversationStore(f"sqlite:///{db_path}")
-    conversation = store.get_conversation(conv_id)
+    conversation = _local_conversation_store().get_conversation(conv_id)
     if conversation is None:
         raise click.ClickException(
             f"Conversation {conv_id!r} not found in the local persistent store. "
@@ -334,6 +337,21 @@ def _read_wrapper_label_local(*, conv_id: str) -> str | None:
         )
     labels = conversation.labels
     return labels.get(_WRAPPER_LABEL_KEY) if isinstance(labels, dict) else None
+
+
+def _local_conversation_store() -> object:
+    """
+    Open the local persistent conversation store.
+
+    :returns: SQLAlchemy-backed store for ``~/.omnigent/chat.db``.
+    """
+    from omnigent.chat import _omnigent_persistent_dir
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    db_path = _omnigent_persistent_dir() / "chat.db"
+    return SqlAlchemyConversationStore(f"sqlite:///{db_path}")
 
 
 def _read_wrapper_label_remote(

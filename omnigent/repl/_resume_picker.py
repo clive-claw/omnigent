@@ -1020,6 +1020,44 @@ def pick_conversation_from_store(
     )
 
 
+def pick_conversation_cross_agent_from_store(
+    conv_store: Any,
+    *,
+    out: IO[str] | None = None,
+    in_: IO[str] | None = None,
+) -> str | None:
+    """
+    Cross-agent sync picker backed by the local persistent store.
+
+    Used by ``omnigent resume`` with no ``--server``. It mirrors
+    :func:`pick_conversation_cross_agent_from_sdk` but reads the
+    local ``chat.db`` directly instead of requiring a running
+    Omnigent server.
+
+    :param conv_store: Conversation store for the list query.
+    :param out: Output stream override.
+    :param in_: Input stream override.
+    :returns: Selected conversation id, or ``None`` on cancel /
+        empty list.
+    """
+    out_stream: IO[str] = out if out is not None else sys.stderr
+    page = conv_store.list_conversations(
+        has_agent_id=True,
+        limit=200,
+        sort_by="updated_at",
+        order="desc",
+    )
+    previews = _collect_previews_sync(conv_store, page.data)
+    return pick_conversation(
+        page.data,
+        agent_name="all runtimes",
+        previews=previews,
+        show_runtime=True,
+        out=out_stream,
+        in_=in_,
+    )
+
+
 def _print_page(
     page: list[_ConversationRow],
     page_start: int,

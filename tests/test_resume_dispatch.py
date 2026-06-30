@@ -24,21 +24,28 @@ from omnigent import resume_dispatch
 # ── run_resume — top-level entry ──────────────────────────
 
 
-def test_run_resume_picker_form_requires_server() -> None:
+def test_run_resume_picker_form_uses_local_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    ``omnigent resume`` (no conv id, no --server) must fail loud.
+    ``omnigent resume`` (no conv id, no --server) opens the local picker.
 
-    Without ``target`` we'd open the cross-agent picker; without
-    ``--server`` we have no Omnigent endpoint to query. Starting an
-    empty local server just for the picker would race with any
-    other ``omnigent`` process the user has running, so we
-    redirect via UsageError instead of silently doing it.
+    The selected conversation then follows the normal local runtime
+    dispatch path.
     """
-    with pytest.raises(click.UsageError) as excinfo:
-        resume_dispatch.run_resume(target=None, server=None)
-    # Message names both ways out of the error: a conv id OR --server.
-    assert "conv_" in str(excinfo.value)
-    assert "--server" in str(excinfo.value)
+    monkeypatch.setattr(
+        resume_dispatch,
+        "_pick_conversation_for_resume_local",
+        lambda: "conv_local",
+    )
+    captured: dict[str, Any] = {}
+
+    def _capture(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(resume_dispatch, "_dispatch_by_runtime", _capture)
+
+    resume_dispatch.run_resume(target=None, server=None)
+
+    assert captured == {"target": "conv_local", "server": None}
 
 
 def test_run_resume_picker_cancel_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,6 +84,62 @@ def test_run_resume_picker_cancel_exits_cleanly(monkeypatch: pytest.MonkeyPatch)
     # If the wrapper was invoked we'd see "run_claude_native" here —
     # which would be the silent-fresh-session bug.
     assert invoked == []
+
+
+def test_run_resume_local_picker_cancel_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Local picker cancellation returns without dispatching.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :returns: None.
+    """
+    monkeypatch.setattr(resume_dispatch, "_pick_conversation_for_resume_local", lambda: None)
+
+    def _fail_if_called(**kwargs: Any) -> None:
+        del kwargs
+        raise AssertionError("dispatch should not run after picker cancel")
+
+    monkeypatch.setattr(resume_dispatch, "_dispatch_by_runtime", _fail_if_called)
+
+    resume_dispatch.run_resume(target=None, server=None)
+
+
+def test_pick_conversation_for_resume_local_reads_persistent_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """
+    Bare ``omnigent resume`` picker reads ``~/.omnigent/chat.db``.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param tmp_path: Temporary persistent Omnigent directory.
+    :returns: None.
+    """
+    import io
+
+    import omnigent.chat as chat_mod
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    db_path = tmp_path / "chat.db"
+    store = SqlAlchemyConversationStore(f"sqlite:///{db_path}")
+    created = store.create_session_with_agent(
+        agent_id="ag_codex",
+        agent_name="codex-native-ui",
+        agent_bundle_location="ag_codex/bundle",
+        agent_description=None,
+        labels={"omnigent.wrapper": "codex-native-ui"},
+    )
+    monkeypatch.setattr(chat_mod, "_omnigent_persistent_dir", lambda: tmp_path)
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    monkeypatch.setattr("sys.stderr", io.StringIO())
+
+    result = resume_dispatch._pick_conversation_for_resume_local()
+
+    assert result == created.conversation.id
 
 
 # ── _dispatch_by_runtime — id-known dispatch ──────────────
