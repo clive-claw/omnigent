@@ -1,7 +1,9 @@
-import { BotIcon, FileIcon, ListTodoIcon, TerminalIcon, XIcon } from "lucide-react";
+import { BotIcon, FileIcon, GlobeIcon, ListTodoIcon, TerminalIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
+import type { BrowserInfo } from "@/hooks/useBrowsers";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BrowserPanel } from "./BrowserPanel";
 import { FilesPanel } from "./FilesPanel";
 import { FileViewer } from "./FileViewer";
 import type { ChangedSort } from "./FlatFileList";
@@ -153,6 +155,10 @@ interface WorkspacePanelProps {
   showShellsTab: boolean;
   /** Number of open shells, shown as the Shells tab badge when > 0. */
   terminalsLength: number;
+  /** Whether the Browser tab is available. */
+  showBrowserTab: boolean;
+  /** Browser resources for the active session. */
+  browsers: BrowserInfo[];
   /** How many child agents are actively working (Agents tab badge). */
   subagentsWorking: number;
   /**
@@ -229,6 +235,8 @@ export function WorkspacePanel({
   changedCount,
   showShellsTab,
   terminalsLength,
+  showBrowserTab,
+  browsers,
   subagentsWorking,
   agentCount,
   isClaudeNative,
@@ -322,6 +330,18 @@ export function WorkspacePanel({
                     {changedCount}
                   </span>
                 )}
+              </TabsTrigger>
+            )}
+            {showBrowserTab && (
+              <TabsTrigger
+                value="browser"
+                className="h-[32px] gap-[6px] rounded-[8px] px-[12px] text-[13px] leading-5"
+              >
+                <GlobeIcon className="size-4" />
+                Browser
+                <span className={cn(TAB_BADGE_BASE, "ml-0.5 bg-muted text-muted-foreground")}>
+                  {browsers.length}
+                </span>
               </TabsTrigger>
             )}
             <TabsTrigger
@@ -427,6 +447,8 @@ export function WorkspacePanel({
           <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
         ) : rightRailTab === "todos" && isClaudeNative ? (
           <TodoPanel frameless />
+        ) : rightRailTab === "browser" && showBrowserTab ? (
+          <BrowserPanel conversationId={conversationId} browsers={browsers} />
         ) : rightRailTab === "terminals" && showShellsTab ? (
           <InlineTerminalsSection conversationId={conversationId} onExpand={openTerminalsPanel} />
         ) : (

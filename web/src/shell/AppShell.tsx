@@ -27,6 +27,7 @@ import {
   useChildSessions,
 } from "@/hooks/useChildSessions";
 import { useDebugMode } from "@/hooks/useDebugMode";
+import { useBrowsers } from "@/hooks/useBrowsers";
 import {
   AGENT_TERMINAL_IDS,
   inventoryTerminals,
@@ -46,6 +47,7 @@ import { useChatStore } from "@/store/chatStore";
 import { livenessRowFromSession, useSessionLiveness } from "@/hooks/useSessionLiveness";
 import { useResizableInlinePanel } from "@/hooks/useResizableInlinePanel";
 import { ChatHeader } from "./ChatHeader";
+import { BrowserPanel } from "./BrowserPanel";
 import { ExecutionLogsPanel } from "./ExecutionLogsPanel";
 import { FileViewer } from "./FileViewer";
 import { FileViewerContext } from "./FileViewerContext";
@@ -208,6 +210,7 @@ export function AppShell() {
   // on a phone they open as full-screen overlays from the session-menu FAB.
   const [subagentsPanelOpen, setSubagentsPanelOpen] = useState(false);
   const [shellsPanelOpen, setShellsPanelOpen] = useState(false);
+  const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
   const [todosPanelOpen, setTodosPanelOpen] = useState(false);
   // The right "Workspace" rail (WorkspacePanel) is open by default and
   // remembers its open/closed state per session — a brand-new session starts
@@ -246,6 +249,7 @@ export function AppShell() {
   const { terminals } = useTerminals(conversationId ?? null, {
     reconcileWhilePending: terminalPending,
   });
+  const { browsers } = useBrowsers(conversationId ?? null);
 
   const debugMode = useDebugMode();
   const { data: conversationsData } = useConversations();
@@ -435,6 +439,7 @@ export function AppShell() {
     () =>
       ({
         files: showFilesPanel,
+        browser: browsers.length > 0,
         // Agents tab is unconditional: the panel always lists at least
         // the main agent (its "main" row), so there's never a dead end.
         subagents: true,
@@ -454,6 +459,7 @@ export function AppShell() {
       showFilesPanel,
       hideTerminalsTab,
       railTerminals.length,
+      browsers.length,
       agentSupportsShells,
       isClaudeNative,
       todos.length,
@@ -472,7 +478,7 @@ export function AppShell() {
   // convergent even when several tabs vanish at once.
   useEffect(() => {
     if (railTabsAvailable[rightRailTab]) return;
-    const next = (["files", "subagents", "terminals", "todos"] as const).find(
+    const next = (["files", "browser", "subagents", "terminals", "todos"] as const).find(
       (t) => railTabsAvailable[t],
     );
     if (next) setRightRailTab(next);
@@ -522,6 +528,7 @@ export function AppShell() {
     setFilesPanelOpen(false);
     setSubagentsPanelOpen(false);
     setShellsPanelOpen(false);
+    setBrowserPanelOpen(false);
     setTodosPanelOpen(false);
     setFilesPanelShowHidden(false);
     if (!conversationId) {
@@ -669,12 +676,15 @@ export function AppShell() {
       setExecutionLogsKey(null); // close execution-logs panel
       setFilesPanelOpen(false); // close files drawer so the viewer is unobscured
       setSubagentsPanelOpen(false); // close mobile agents drawer
+      setBrowserPanelOpen(false); // close mobile browser drawer
       setTodosPanelOpen(false); // close mobile tasks drawer
       // Pull the rail to the Files tab when parked on a tab where the viewer
       // won't render (Terminals, Subagents, Todos). The Files tab surfaces the
       // FileViewer inline, so leave it undisturbed.
       setRightRailTab((prev) =>
-        prev === "terminals" || prev === "subagents" || prev === "todos" ? "files" : prev,
+        prev === "terminals" || prev === "browser" || prev === "subagents" || prev === "todos"
+          ? "files"
+          : prev,
       );
       // Reveal the rail so the viewer is actually visible — the rail defaults
       // open but a session the user collapsed restores collapsed, so opening a
@@ -828,7 +838,7 @@ export function AppShell() {
         return next;
       });
     },
-    [setSearchParams],
+    [clearFileViewerUrl, setSearchParams],
   ); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch the workspace rail's tab. The side effect (closing any open
@@ -853,6 +863,7 @@ export function AppShell() {
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setPanelInitialKey(key);
   }
@@ -864,6 +875,7 @@ export function AppShell() {
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setExecutionLogsKey(key);
   }
@@ -878,6 +890,7 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setFilesPanelOpen(true);
   }
@@ -891,6 +904,7 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setFilesPanelOpen(false); // close files drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setSubagentsPanelOpen(true);
   }
@@ -905,8 +919,23 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setShellsPanelOpen(true);
+  }
+
+  // Mobile FAB -> "Browser" opens the browser resource preview as a
+  // full-screen drawer, matching the desktop rail's Browser tab.
+  function openBrowserPanel() {
+    setSelectedFilePath(null); // close file viewer
+    clearFileViewerUrl();
+    setPanelInitialKey(null); // close terminals panel
+    setExecutionLogsKey(null); // close execution-logs panel
+    setFilesPanelOpen(false); // close files drawer
+    setSubagentsPanelOpen(false); // close mobile agents drawer
+    setShellsPanelOpen(false); // close mobile shells drawer
+    setTodosPanelOpen(false); // close mobile tasks drawer
+    setBrowserPanelOpen(true);
   }
 
   // Mobile FAB → "Tasks" opens the todo list (the desktop rail's Tasks tab)
@@ -919,6 +948,7 @@ export function AppShell() {
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setBrowserPanelOpen(false); // close mobile browser drawer
     setTodosPanelOpen(true);
   }
 
@@ -1108,10 +1138,12 @@ export function AppShell() {
                     filesPanelOpen,
                     subagentsPanelOpen,
                     shellsPanelOpen,
+                    browserPanelOpen,
                     todosPanelOpen,
                     hideTerminalsTab,
                     showShellsTab: railTabsAvailable.terminals,
                     terminalsLength: railTerminals.length,
+                    browsersLength: browsers.length,
                     isClaudeNative,
                     todosCompleted,
                     todosTotal: todos.length,
@@ -1121,6 +1153,7 @@ export function AppShell() {
                     agentCount,
                     onOpenFiles: openFilesPanel,
                     onOpenShells: openShellsPanel,
+                    onOpenBrowser: openBrowserPanel,
                     onOpenSubagents: openSubagentsPanel,
                     onOpenTodos: openTodosPanel,
                     onOpenMainExecutionLog: openMainExecutionLog,
@@ -1157,6 +1190,8 @@ export function AppShell() {
                       changedCount={changedCount}
                       showShellsTab={railTabsAvailable.terminals}
                       terminalsLength={railTerminals.length}
+                      showBrowserTab={railTabsAvailable.browser}
+                      browsers={browsers}
                       subagentsWorking={subagentsWorking}
                       agentCount={agentCount}
                       isClaudeNative={isClaudeNative}
@@ -1244,6 +1279,16 @@ export function AppShell() {
                     conversationId={conversationId}
                     onExpand={openTerminalsPanel}
                   />
+                </MobilePanelDrawer>
+              )}
+              {conversationId && (
+                <MobilePanelDrawer
+                  open={browserPanelOpen}
+                  title="Browser"
+                  onClose={() => setBrowserPanelOpen(false)}
+                  testId="browser-panel-drawer"
+                >
+                  <BrowserPanel conversationId={conversationId} browsers={browsers} />
                 </MobilePanelDrawer>
               )}
               {conversationId && (

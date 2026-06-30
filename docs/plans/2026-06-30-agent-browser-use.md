@@ -322,6 +322,16 @@ Acceptance:
 - Closing browser removes the browser resource from the rail.
 - Existing Files, Agents, Shells, and Tasks tab fallback behavior remains stable.
 
+Implementation note, 2026-06-30:
+
+- Added `useBrowsers()` with an HTTP seed, browser resource mapping, screenshot URL versioning, close mutation, and React Query cache keys.
+- Patched `chatStore` resource event handling so `session.resource.created/deleted` updates the browser cache live, including idempotent replacement of duplicate browser ids.
+- Added a Browser rail tab after Files and before Agents, plus the matching mobile menu entry and full-screen mobile drawer.
+- Added `BrowserPanel` with stable screenshot preview layout, URL/title/status/error display, screenshot reload, open URL, and close controls.
+- Added turn-end browser query invalidation so existing browser resource updates made during a response are refetched even before a dedicated `session.browser.updated` event exists.
+- Verified with `npm --prefix web test -- ChatHeader.test.tsx WorkspacePanel.test.tsx chatStore.test.ts` and `npm --prefix web run type-check`.
+- `session.browser.updated` remains deferred with the Playwright browser manager; current UI updates rely on seeded resources plus resource create/delete events.
+
 ### U-7: Packaging And Install Guidance
 
 Files:

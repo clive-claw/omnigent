@@ -3,6 +3,7 @@ import {
   ChevronLeftIcon,
   EllipsisVerticalIcon,
   FileIcon,
+  GlobeIcon,
   InfoIcon,
   ListIcon,
   ListTodoIcon,
@@ -49,8 +50,12 @@ interface MobileSessionMenuProps {
   subagentsPanelOpen: boolean;
   /** True while the mobile shells drawer is open. */
   shellsPanelOpen: boolean;
+  /** True while the mobile browser drawer is open. */
+  browserPanelOpen: boolean;
   /** True while the mobile tasks drawer is open. */
   todosPanelOpen: boolean;
+  /** Number of browser resources (Browser entry badge + visibility). */
+  browsersLength: number;
   /** Hide the Shells entry (claude-native sub-agents only). */
   hideTerminalsTab: boolean;
   /** Whether the Shells entry is available. */
@@ -80,6 +85,8 @@ interface MobileSessionMenuProps {
   onOpenShells: () => void;
   /** Open the mobile agents drawer. */
   onOpenSubagents: () => void;
+  /** Open the mobile browser drawer. */
+  onOpenBrowser: () => void;
   /** Open the mobile tasks drawer. */
   onOpenTodos: () => void;
   /** Open the main execution-log push panel. */
@@ -398,6 +405,7 @@ export function ChatHeader({
           !mobileMenu.filesPanelOpen &&
           !mobileMenu.subagentsPanelOpen &&
           !mobileMenu.shellsPanelOpen &&
+          !mobileMenu.browserPanelOpen &&
           !mobileMenu.todosPanelOpen &&
           (hasRailContent || mobileMenu.debugMode) && (
             <DropdownMenu>
@@ -427,6 +435,18 @@ export function ChatHeader({
                         {mobileMenu.changedCount}
                       </span>
                     )}
+                  </DropdownMenuItem>
+                )}
+                {mobileMenu.browsersLength > 0 && (
+                  <DropdownMenuItem
+                    onSelect={mobileMenu.onOpenBrowser}
+                    className="gap-2.5 px-2.5 py-2 text-base"
+                  >
+                    <GlobeIcon className="size-4" />
+                    Browser
+                    <span className={cn(TAB_BADGE_BASE, "ml-auto bg-muted text-muted-foreground")}>
+                      {mobileMenu.browsersLength}
+                    </span>
                   </DropdownMenuItem>
                 )}
                 {/* Agents — always present (the panel lists at least
