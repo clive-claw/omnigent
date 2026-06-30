@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -1021,6 +1022,57 @@ def build_mcp_config(bridge_dir: Path, *, python_executable: str | None = None) 
     }
 
 
+def _read_user_claude_hooks() -> dict[str, Any]:
+    """
+    Read globally configured Claude hooks from ``~/.claude/settings.json``.
+
+    Omnigent launches Claude with invocation-local ``--settings`` so the
+    wrapper can add bridge, policy, and streaming hooks. That bypasses global
+    hook settings unless we explicitly merge them here. Malformed or missing
+    settings fail soft so native launch is never blocked by user config.
+
+    :returns: A ``hooks`` mapping, or an empty mapping when unavailable.
+    """
+    try:
+        raw = _USER_CLAUDE_SETTINGS_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    hooks = parsed.get("hooks")
+    return hooks if isinstance(hooks, dict) else {}
+
+
+def _merge_claude_hooks(
+    inherited_hooks: dict[str, Any], omnigent_hooks: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Merge global user Claude hooks with Omnigent's invocation-local hooks.
+
+    User hooks stay first for each event so existing event order and matcher
+    behavior are preserved. Omnigent hooks are appended to keep bridge and
+    policy functionality active.
+
+    :param inherited_hooks: Hooks from the user's global Claude settings.
+    :param omnigent_hooks: Hooks generated for this Omnigent launch.
+    :returns: A merged hooks mapping.
+    """
+    merged: dict[str, Any] = {}
+    for event_name, entries in inherited_hooks.items():
+        if isinstance(entries, list):
+            merged[str(event_name)] = copy.deepcopy(entries)
+    for event_name, entries in omnigent_hooks.items():
+        if not isinstance(entries, list):
+            continue
+        merged.setdefault(str(event_name), [])
+        merged[str(event_name)].extend(copy.deepcopy(entries))
+    return merged
+
+
 def build_hook_settings(
     bridge_dir: Path,
     *,
@@ -1231,6 +1283,7 @@ def build_hook_settings(
         # server-side. Covers both web-UI-injected and direct-terminal
         # prompts, since both fire UserPromptSubmit.
         hooks["UserPromptSubmit"].append({"hooks": [evaluate_policy_hook]})
+    hooks = _merge_claude_hooks(_read_user_claude_hooks(), hooks)
     settings: dict[str, Any] = {"hooks": hooks}
     if api_key_helper:
         settings["apiKeyHelper"] = api_key_helper

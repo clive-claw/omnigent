@@ -181,9 +181,9 @@ def test_implement_plan_skill_keeps_worker_discipline() -> None:
     discipline while Polly keeps orchestration, fan-out, registry state, and
     cross-review outside the worker workflow.
     """
-    implement_plan = (
-        _POLLY_BUNDLE / "skills" / "implement-plan" / "SKILL.md"
-    ).read_text(encoding="utf-8")
+    implement_plan = (_POLLY_BUNDLE / "skills" / "implement-plan" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     compact = " ".join(implement_plan.split())
 
     assert "Polly handles orchestration, worktrees, registry state, PR routing" in compact
@@ -204,9 +204,7 @@ def test_plan_work_skill_selects_tracks_and_closes_repo_plans() -> None:
     layer while keeping live task state in the registry.
     """
     config = (_POLLY_BUNDLE / "config.yaml").read_text(encoding="utf-8")
-    plan_work = (_POLLY_BUNDLE / "skills" / "plan-work" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    plan_work = (_POLLY_BUNDLE / "skills" / "plan-work" / "SKILL.md").read_text(encoding="utf-8")
     compact_config = " ".join(config.split())
     compact_plan_work = " ".join(plan_work.split())
 
@@ -236,11 +234,10 @@ def test_plan_work_skill_selects_tracks_and_closes_repo_plans() -> None:
     assert "polly_status: not_started" in compact_plan_work
     assert "polly_blocker: null" in compact_plan_work
     assert (
-        "Allowed plan status values are `not_started`, `in_progress`, `blocked`, "
-        "and `complete`"
+        "Allowed plan status values are `not_started`, `in_progress`, `blocked`, and `complete`"
     ) in compact_plan_work
     assert ".polly/registry.json` owns execution progress" in compact_plan_work
-    assert 'exact instruction `follow implement-plan`' in compact_plan_work
+    assert "exact instruction `follow implement-plan`" in compact_plan_work
 
 
 def test_orchestrator_keeps_timer_tool_but_forbids_worker_polling(

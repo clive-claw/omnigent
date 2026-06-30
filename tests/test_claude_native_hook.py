@@ -992,6 +992,10 @@ def test_build_hook_settings_registers_policy_hooks_when_omnigent_server_url_set
     """
     monkeypatch.setattr("omnigent.claude_native_bridge._TRUSTED_PARENT", tmp_path)
     monkeypatch.setattr("omnigent.claude_native_bridge._BRIDGE_ROOT", tmp_path / "root")
+    monkeypatch.setattr(
+        "omnigent.claude_native_bridge._USER_CLAUDE_SETTINGS_PATH",
+        tmp_path / "missing-settings.json",
+    )
     bridge_dir = prepare_bridge_dir(
         "conv_abc",
         bridge_id="bridge_test",
@@ -1097,6 +1101,10 @@ def test_build_hook_settings_omits_policy_hooks_without_omnigent_server_url(
     """
     monkeypatch.setattr("omnigent.claude_native_bridge._TRUSTED_PARENT", tmp_path)
     monkeypatch.setattr("omnigent.claude_native_bridge._BRIDGE_ROOT", tmp_path / "root")
+    monkeypatch.setattr(
+        "omnigent.claude_native_bridge._USER_CLAUDE_SETTINGS_PATH",
+        tmp_path / "missing-settings.json",
+    )
     bridge_dir = prepare_bridge_dir(
         "conv_abc",
         bridge_id="bridge_test",
@@ -1113,6 +1121,75 @@ def test_build_hook_settings_omits_policy_hooks_without_omnigent_server_url(
         assert "evaluate-policy" not in cmd, (
             "Policy evaluation hook should not be registered without Omnigent URL"
         )
+
+
+def test_build_hook_settings_preserves_global_user_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Invocation-local Omnigent settings must not strip global Claude hooks.
+
+    Claude is launched with ``--settings`` so global ``~/.claude/settings.json``
+    hooks do not apply unless Omnigent merges them. This protects lifecycle
+    hooks such as Neo4j memory capture while keeping Omnigent's bridge hooks.
+    """
+    monkeypatch.setattr("omnigent.claude_native_bridge._TRUSTED_PARENT", tmp_path)
+    monkeypatch.setattr("omnigent.claude_native_bridge._BRIDGE_ROOT", tmp_path / "root")
+    user_settings = tmp_path / "settings.json"
+    user_settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/Users/me/code/ops/scripts/neo4j-store-message.py",
+                                }
+                            ]
+                        }
+                    ],
+                    "PreToolUse": [
+                        {
+                            "matcher": "Agent",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "jq -e '.tool_input.model'",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "omnigent.claude_native_bridge._USER_CLAUDE_SETTINGS_PATH",
+        user_settings,
+    )
+    bridge_dir = prepare_bridge_dir(
+        "conv_abc",
+        bridge_id="bridge_test",
+        workspace=tmp_path,
+    )
+
+    hooks = build_hook_settings(
+        bridge_dir,
+        ap_server_url="http://127.0.0.1:8787",
+    )["hooks"]
+
+    stop_commands = [h["command"] for entry in hooks["Stop"] for h in entry["hooks"]]
+    assert stop_commands[0].endswith("neo4j-store-message.py")
+    assert any("omnigent.claude_native_hook" in cmd for cmd in stop_commands)
+
+    pre_tool_use = hooks["PreToolUse"]
+    assert pre_tool_use[0]["matcher"] == "Agent"
+    assert pre_tool_use[0]["hooks"][0]["command"] == "jq -e '.tool_input.model'"
+    assert any("evaluate-policy" in h["command"] for entry in pre_tool_use for h in entry["hooks"])
 
 
 def test_evaluate_policy_pre_tool_use_converts_and_returns_deny(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ from omnigent.codex_native_app_server import (
     _POLICY_HOOK_TIMEOUT_SECONDS,
     CodexNativeAppServer,
     _codex_policy_hooks_settings,
+    _write_codex_policy_hooks_file,
     build_codex_native_server,
     trust_native_policy_hooks,
 )
@@ -786,6 +788,142 @@ def test_policy_hooks_register_user_prompt_submit() -> None:
     prompt_hook = hooks["UserPromptSubmit"][0]["hooks"][0]
     # Same evaluate-policy command as the tool phases.
     assert prompt_hook["command"] == hooks["PreToolUse"][0]["hooks"][0]["command"]
+
+
+def test_write_policy_hooks_file_preserves_user_memory_hooks_and_trust(
+    tmp_path: Path,
+) -> None:
+    """
+    Omnigent's private CODEX_HOME must inherit trusted user lifecycle hooks.
+
+    A direct Codex session loads ``~/.codex/hooks.json`` and trust state keyed
+    to that absolute file path. Omnigent uses a private per-session CODEX_HOME,
+    so writing only Omnigent's policy hooks would drop user hooks such as the
+    Neo4j ``Stop`` / ``PreCompact`` memory writer. This verifies the private
+    hooks file keeps those user hooks and mirrors their trusted hashes under
+    the private hook-file path.
+    """
+    source_home = tmp_path / "real-codex-home"
+    source_home.mkdir()
+    source_hooks = source_home / "hooks.json"
+    source_hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/Users/me/.codex/hooks/codex-neo4j-memory.py",
+                                    "timeout": 30,
+                                }
+                            ]
+                        }
+                    ],
+                    "PreCompact": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/Users/me/.codex/hooks/codex-neo4j-memory.py",
+                                    "timeout": 30,
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    codex_home = tmp_path / "private-codex-home"
+    codex_home.mkdir()
+    private_hooks = codex_home / "hooks.json"
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                f'[hooks.state."{source_hooks}:stop:0:0"]',
+                'trusted_hash = "sha256:stop"',
+                "",
+                f'[hooks.state."{source_hooks}:pre_compact:0:0"]',
+                'trusted_hash = "sha256:pre"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _write_codex_policy_hooks_file(
+        codex_home,
+        tmp_path / "bridge",
+        "/venv/bin/python",
+        inherited_hooks_path=source_hooks,
+    )
+
+    payload = json.loads(private_hooks.read_text(encoding="utf-8"))
+    hooks = payload["hooks"]
+    assert hooks["Stop"][0]["hooks"][0]["command"].endswith("codex-neo4j-memory.py")
+    assert hooks["PreCompact"][0]["hooks"][0]["command"].endswith("codex-neo4j-memory.py")
+    assert "PreToolUse" in hooks
+    assert "PostToolUse" in hooks
+    assert "UserPromptSubmit" in hooks
+
+    rendered_config = (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert f'[hooks.state."{source_hooks}:stop:0:0"]' in rendered_config
+    assert f'[hooks.state."{private_hooks}:stop:0:0"]' in rendered_config
+    assert f'[hooks.state."{private_hooks}:pre_compact:0:0"]' in rendered_config
+    assert 'trusted_hash = "sha256:stop"' in rendered_config
+    assert 'trusted_hash = "sha256:pre"' in rendered_config
+
+
+def test_write_policy_hooks_file_appends_policy_hooks_after_user_hooks(
+    tmp_path: Path,
+) -> None:
+    """
+    User hook indexes must remain stable when Omnigent adds policy hooks.
+
+    Codex trust keys include the event entry index. If a user's existing
+    ``PreToolUse`` hook moved from index 0 to index 1, its remapped trust entry
+    would no longer apply. The policy hook is therefore appended.
+    """
+    source_hooks = tmp_path / "real-hooks.json"
+    source_hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/Users/me/.codex/hooks/user-guard.py",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    codex_home = tmp_path / "private-codex-home"
+    codex_home.mkdir()
+
+    _write_codex_policy_hooks_file(
+        codex_home,
+        tmp_path / "bridge",
+        "/venv/bin/python",
+        inherited_hooks_path=source_hooks,
+    )
+
+    pre_tool_use = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))["hooks"][
+        "PreToolUse"
+    ]
+    assert pre_tool_use[0]["hooks"][0]["command"].endswith("user-guard.py")
+    assert "omnigent.codex_native_hook" in pre_tool_use[1]["hooks"][0]["command"]
 
 
 class TestPinCodexConfigModel:
