@@ -47,9 +47,9 @@ function firstMime(data: unknown, mimes: string[]): { mime: string; value: unkno
   return null;
 }
 
-function parseNotebook(content: string):
-  | { ok: true; cells: NotebookCell[] }
-  | { ok: false; title: string; message: string } {
+function parseNotebook(
+  content: string,
+): { ok: true; cells: NotebookCell[] } | { ok: false; title: string; message: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -109,7 +109,13 @@ function CodeBlock({ code, language = "python" }: { code: string; language?: Bun
   );
 }
 
-function OutputText({ children, tone = "default" }: { children: string; tone?: "default" | "error" }) {
+function OutputText({
+  children,
+  tone = "default",
+}: {
+  children: string;
+  tone?: "default" | "error";
+}) {
   return (
     <pre
       className={cn(
