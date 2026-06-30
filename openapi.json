@@ -4115,11 +4115,12 @@
             "type": "string"
           },
           "type": {
-            "description": "Resource kind, initially `\"environment\"`, `\"terminal\"`, or `\"file\"`.",
+            "description": "Resource kind, initially `\"environment\"`, `\"terminal\"`, `\"file\"`, or `\"browser\"`.",
             "enum": [
               "environment",
               "terminal",
-              "file"
+              "file",
+              "browser"
             ],
             "title": "Type",
             "type": "string"
@@ -8868,6 +8869,234 @@
           }
         },
         "summary": "List Session Resources",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/resources/browsers": {
+      "get": {
+        "description": "Return only browser resources for a session.",
+        "operationId": "list_session_browsers_v1_sessions__session_id__resources_browsers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Browsers",
+        "tags": [
+          "session_resources"
+        ]
+      },
+      "post": {
+        "description": "Create or return the session's default browser resource.",
+        "operationId": "create_session_browser_v1_sessions__session_id__resources_browsers_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Session Browser",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/resources/browsers/{browser_id}": {
+      "delete": {
+        "description": "Close a browser resource.",
+        "operationId": "delete_session_browser_v1_sessions__session_id__resources_browsers__browser_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "browser_id",
+            "required": true,
+            "schema": {
+              "title": "Browser Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Session Browser",
+        "tags": [
+          "session_resources"
+        ]
+      },
+      "get": {
+        "description": "Return a single browser resource by id.",
+        "operationId": "get_session_browser_v1_sessions__session_id__resources_browsers__browser_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "browser_id",
+            "required": true,
+            "schema": {
+              "title": "Browser Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Browser",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/resources/browsers/{browser_id}/screenshot": {
+      "get": {
+        "description": "Proxy browser screenshot PNG bytes through authenticated server routes.",
+        "operationId": "get_session_browser_screenshot_v1_sessions__session_id__resources_browsers__browser_id__screenshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "browser_id",
+            "required": true,
+            "schema": {
+              "title": "Browser Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Browser Screenshot",
         "tags": [
           "session_resources"
         ]

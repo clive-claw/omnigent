@@ -10,6 +10,7 @@ without creating an API-layer import cycle.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 DEFAULT_ENVIRONMENT_ID = "default"
 
-ResourceType = Literal["environment", "terminal", "file"]
+ResourceType = Literal["environment", "terminal", "file", "browser"]
 
 _SAFE_RESOURCE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -67,6 +68,56 @@ class SessionResourceView:
     name: str
     metadata: dict[str, object] = field(default_factory=dict)
     environment: str | None = None
+
+
+@dataclass(frozen=True)
+class BrowserResourceState:
+    """Runner-owned metadata projected into a browser session resource."""
+
+    url: str | None = None
+    title: str | None = None
+    loading: bool = False
+    error: str | None = None
+    screenshot_version: int | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+def browser_resource_id(session_key: str = "default") -> str:
+    """Build the deterministic V1 browser resource id."""
+    return f"browser_{safe_resource_component(session_key)}"
+
+
+def _state_value(state: BrowserResourceState | Mapping[str, object] | Any, key: str) -> object:
+    """Read a browser state value from a dataclass/object or mapping."""
+    if isinstance(state, Mapping):
+        return state.get(key)
+    return getattr(state, key, None)
+
+
+def browser_resource_view(
+    session_id: str,
+    state: BrowserResourceState | Mapping[str, object] | Any,
+    *,
+    session_key: str = "default",
+) -> SessionResourceView:
+    """Build the shared resource projection for the session browser."""
+    metadata = {
+        "url": _state_value(state, "url"),
+        "title": _state_value(state, "title"),
+        "loading": bool(_state_value(state, "loading")),
+        "error": _state_value(state, "error"),
+        "screenshot_version": _state_value(state, "screenshot_version"),
+        "created_at": _state_value(state, "created_at"),
+        "updated_at": _state_value(state, "updated_at"),
+    }
+    return SessionResourceView(
+        id=browser_resource_id(session_key),
+        type="browser",
+        session_id=session_id,
+        name="Browser",
+        metadata=metadata,
+    )
 
 
 def environment_safety_metadata(os_env_spec: Any | None) -> dict[str, object]:
@@ -283,7 +334,7 @@ def filter_resources_by_type(
 
     :param page: Full resource inventory.
     :param resource_type: One of ``"environment"``, ``"terminal"``,
-        or ``"file"``.
+        ``"file"``, or ``"browser"``.
     :returns: Filtered :class:`PagedList` with standard cursor fields.
     """
     filtered = [r for r in page.data if r.type == resource_type]

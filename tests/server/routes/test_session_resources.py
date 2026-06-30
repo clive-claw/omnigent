@@ -478,6 +478,36 @@ def _runner_payload() -> dict[str, object]:
     }
 
 
+def _browser_resource_payload() -> dict[str, object]:
+    return {
+        "id": "browser_default",
+        "object": "session.resource",
+        "type": "browser",
+        "session_id": "conv_proxy",
+        "name": "Browser",
+        "metadata": {
+            "url": None,
+            "title": None,
+            "loading": False,
+            "error": None,
+            "screenshot_version": None,
+            "created_at": 10.0,
+            "updated_at": 10.0,
+        },
+    }
+
+
+def _browser_list_payload() -> dict[str, object]:
+    browser = _browser_resource_payload()
+    return {
+        "object": "list",
+        "data": [browser],
+        "first_id": "browser_default",
+        "last_id": "browser_default",
+        "has_more": False,
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_session_labels_uses_labels_only_path(
     client: httpx.AsyncClient,
@@ -1007,6 +1037,109 @@ async def test_list_terminals_forwards_pagination_params_to_runner(
     # here means the proxy dropped the whole query string — the
     # refresh-flips-tab-order regression.
     assert fake_runner.get_params == [{"order": "asc", "limit": "1000"}]
+
+
+@pytest.mark.asyncio
+async def test_list_browsers_forwards_pagination_params_to_runner(
+    client: httpx.AsyncClient,
+) -> None:
+    """GET /resources/browsers validates session and proxies supported params."""
+    fake_runner = _FakeRunnerClient(payload=_browser_list_payload())
+    set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
+
+    resp = await client.get(
+        "/v1/sessions/conv_proxy/resources/browsers?order=asc&limit=1000&bogus=1",
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"][0]["type"] == "browser"
+    assert fake_runner.calls == [
+        ("GET", "/v1/sessions/conv_proxy/resources/browsers"),
+    ]
+    assert fake_runner.get_params == [{"order": "asc", "limit": "1000"}]
+
+
+@pytest.mark.asyncio
+async def test_create_browser_proxies_to_runner(
+    client: httpx.AsyncClient,
+) -> None:
+    """POST /resources/browsers requires edit access then proxies JSON."""
+    fake_runner = _FakeRunnerClient(payload=_browser_resource_payload())
+    set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
+
+    resp = await client.post("/v1/sessions/conv_proxy/resources/browsers", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "browser_default"
+    assert fake_runner.calls == [
+        ("POST", "/v1/sessions/conv_proxy/resources/browsers"),
+    ]
+    assert fake_runner.post_json_calls == [
+        ("/v1/sessions/conv_proxy/resources/browsers", {}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_browser_by_id_proxies_to_runner(
+    client: httpx.AsyncClient,
+) -> None:
+    """GET /resources/browsers/{id} validates read access then proxies."""
+    fake_runner = _FakeRunnerClient(payload=_browser_resource_payload())
+    set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
+
+    resp = await client.get("/v1/sessions/conv_proxy/resources/browsers/browser_default")
+
+    assert resp.status_code == 200
+    assert resp.json()["type"] == "browser"
+    assert fake_runner.calls == [
+        ("GET", "/v1/sessions/conv_proxy/resources/browsers/browser_default"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browser_screenshot_proxies_png_bytes(
+    client: httpx.AsyncClient,
+) -> None:
+    """Screenshot proxy returns binary PNG bytes with no-store caching."""
+    path = "/v1/sessions/conv_proxy/resources/browsers/browser_default/screenshot"
+    fake_runner = _FakeRunnerClient(
+        text_responses={path: (200, "png-bytes", {"content-type": "image/png"})},
+    )
+    set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
+
+    resp = await client.get(
+        "/v1/sessions/conv_proxy/resources/browsers/browser_default/screenshot?v=7&bogus=1"
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.content == b"png-bytes"
+    assert fake_runner.calls == [("GET", path)]
+    assert fake_runner.get_params == [{"v": "7"}]
+
+
+@pytest.mark.asyncio
+async def test_delete_browser_proxies_to_runner(
+    client: httpx.AsyncClient,
+) -> None:
+    """DELETE /resources/browsers/{id} validates edit access then proxies."""
+    fake_runner = _FakeRunnerClient(
+        payload={
+            "id": "browser_default",
+            "object": "session.resource.deleted",
+            "deleted": True,
+        }
+    )
+    set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
+
+    resp = await client.delete("/v1/sessions/conv_proxy/resources/browsers/browser_default")
+
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True
+    assert fake_runner.calls == [
+        ("DELETE", "/v1/sessions/conv_proxy/resources/browsers/browser_default"),
+    ]
 
 
 @pytest.mark.asyncio

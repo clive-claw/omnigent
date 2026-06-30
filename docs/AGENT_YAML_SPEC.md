@@ -44,6 +44,7 @@ resolved from the YAML file's directory.
 | `async` | Optional | Whether async work tools are exposed. Defaults to `true`. |
 | `cancellable` | Optional | Whether the session can be cancelled. Defaults to `true`. |
 | `timers` | Optional | Whether timer tools are exposed. Defaults to `false`. |
+| `browser` | Optional | Whether browser automation tools are exposed. Defaults to `false`. |
 
 ## Executor
 

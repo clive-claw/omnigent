@@ -17,10 +17,16 @@ import pytest
 from fastapi import FastAPI
 
 from omnigent.entities import DEFAULT_ENVIRONMENT_ID
+from omnigent.entities.pagination import PagedList
 from omnigent.entities.session_resources import (
+    BrowserResourceState,
     SessionResourceView,
+    browser_resource_id,
+    browser_resource_view,
     default_environment_resource,
     environment_safety_metadata,
+    filter_resources_by_type,
+    session_resource_view_to_dict,
     terminal_resource_id,
     terminal_resource_view,
 )
@@ -36,6 +42,7 @@ from omnigent.runner.resource_registry import (
     CLAUDE_NATIVE_TERMINAL_ROLE,
     SessionResourceRegistry,
 )
+from omnigent.server.schemas import SessionResourceObject
 from omnigent.spec.types import AgentSpec, ExecutorSpec
 from omnigent.terminals import TerminalListEntry, TerminalRegistry
 from tests.runner.helpers import NullServerClient, make_test_terminal_instance
@@ -112,6 +119,65 @@ def _seed_registry(
     slot = registry._by_conversation.setdefault(conversation_id, {})
     for instance in instances:
         slot[(instance.name, instance.session_key)] = instance
+
+
+def test_browser_resource_id_is_stable_and_sanitized() -> None:
+    """The V1 default browser resource id is deterministic."""
+    assert browser_resource_id() == "browser_default"
+    assert browser_resource_id(" main/browser ") == "browser_main_browser"
+
+
+def test_browser_resource_view_projects_api_metadata() -> None:
+    """Browser resources use the generic session-resource object shape."""
+    resource = browser_resource_view(
+        "conv_browser",
+        BrowserResourceState(
+            url="https://example.com/",
+            title="Example",
+            loading=False,
+            error=None,
+            screenshot_version=3,
+            created_at=10.0,
+            updated_at=12.0,
+        ),
+    )
+
+    payload = session_resource_view_to_dict(resource)
+
+    assert payload == {
+        "id": "browser_default",
+        "object": "session.resource",
+        "type": "browser",
+        "session_id": "conv_browser",
+        "name": "Browser",
+        "metadata": {
+            "url": "https://example.com/",
+            "title": "Example",
+            "loading": False,
+            "error": None,
+            "screenshot_version": 3,
+            "created_at": 10.0,
+            "updated_at": 12.0,
+        },
+    }
+    assert SessionResourceObject.model_validate(payload).type == "browser"
+
+
+def test_filter_resources_by_type_accepts_browser_resources() -> None:
+    """Generic resource filtering handles the new browser type."""
+    browser = browser_resource_view("conv_browser", {"loading": True})
+    page = PagedList(
+        data=[default_environment_resource("conv_browser"), browser],
+        first_id=DEFAULT_ENVIRONMENT_ID,
+        last_id=browser.id,
+        has_more=False,
+    )
+
+    filtered = filter_resources_by_type(page, "browser")
+
+    assert filtered.data == [browser]
+    assert filtered.first_id == "browser_default"
+    assert filtered.last_id == "browser_default"
 
 
 class _CapturingResourceRegistry:
@@ -445,6 +511,73 @@ async def test_list_terminals_returns_only_terminal_resources(
     assert "terminal_bash_s1" in ids
     assert "terminal_python_s2" in ids
     assert DEFAULT_ENVIRONMENT_ID not in ids
+
+
+@pytest.mark.asyncio
+async def test_browser_resource_routes_create_list_get_and_delete(
+    client: httpx.AsyncClient,
+) -> None:
+    """Browser typed collection routes expose the default browser resource."""
+    empty = await client.get("/v1/sessions/conv_abc/resources/browsers")
+    assert empty.status_code == 200
+    assert empty.json()["data"] == []
+
+    created = await client.post(
+        "/v1/sessions/conv_abc/resources/browsers",
+        json={},
+    )
+    assert created.status_code == 200
+    browser = created.json()
+    assert browser["id"] == "browser_default"
+    assert browser["type"] == "browser"
+    assert browser["metadata"]["loading"] is False
+
+    listed = await client.get("/v1/sessions/conv_abc/resources/browsers?order=asc")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["data"]] == ["browser_default"]
+
+    filtered = await client.get("/v1/sessions/conv_abc/resources?type=browser&order=asc")
+    assert filtered.status_code == 200
+    assert [item["type"] for item in filtered.json()["data"]] == ["browser"]
+
+    fetched = await client.get("/v1/sessions/conv_abc/resources/browsers/browser_default")
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == "browser_default"
+
+    deleted = await client.delete("/v1/sessions/conv_abc/resources/browsers/browser_default")
+    assert deleted.status_code == 200
+    assert deleted.json() == {
+        "id": "browser_default",
+        "object": "session.resource.deleted",
+        "deleted": True,
+    }
+
+    missing = await client.get("/v1/sessions/conv_abc/resources/browsers/browser_default")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_browser_requires_json_content_type(client: httpx.AsyncClient) -> None:
+    """Runner create mirrors mutable resource route content-type strictness."""
+    resp = await client.post("/v1/sessions/conv_abc/resources/browsers", content="")
+
+    assert resp.status_code == 415
+    assert resp.json()["error"]["code"] == "unsupported_media_type"
+
+
+@pytest.mark.asyncio
+async def test_browser_screenshot_returns_404_until_capture_exists(
+    client: httpx.AsyncClient,
+) -> None:
+    """Screenshot endpoint is present but returns 404 before the browser captures."""
+    await client.post("/v1/sessions/conv_abc/resources/browsers", json={})
+
+    resp = await client.get(
+        "/v1/sessions/conv_abc/resources/browsers/browser_default/screenshot?v=1"
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "not_found"
 
 
 @pytest.mark.asyncio

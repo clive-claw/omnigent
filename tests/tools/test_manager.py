@@ -407,6 +407,29 @@ def test_session_reads_registered_but_writes_gated_without_opt_in() -> None:
     assert "sys_agent_list" in names
 
 
+def test_browser_tools_registered_only_with_browser_opt_in() -> None:
+    """Top-level ``browser: true`` is the gate for ``sys_browser_*`` tools."""
+    default_names = {
+        s["function"]["name"] for s in ToolManager(AgentSpec(spec_version=1)).get_tool_schemas()
+    }
+    browser_names = {
+        s["function"]["name"]
+        for s in ToolManager(AgentSpec(spec_version=1, browser=True)).get_tool_schemas()
+    }
+
+    expected = {
+        "sys_browser_open",
+        "sys_browser_click",
+        "sys_browser_type",
+        "sys_browser_key",
+        "sys_browser_snapshot",
+        "sys_browser_screenshot",
+        "sys_browser_close",
+    }
+    assert not (default_names & expected)
+    assert expected <= browser_names
+
+
 def test_spawn_flag_registers_write_tools_without_sub_agents() -> None:
     """
     Top-level ``spawn: true`` registers the spawn writes without any

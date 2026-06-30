@@ -2230,6 +2230,113 @@ async def test_runner_terminal_dispatch_passes_cli_workspace(
     assert captured["workspace"] == workspace.resolve()
 
 
+@pytest.mark.asyncio
+async def test_runner_browser_open_snapshot_and_close_use_resource_registry() -> None:
+    """Browser tools create, inspect, and close the default browser resource."""
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    registry = SessionResourceRegistry()
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def publish(session_id: str, event: dict[str, object]) -> None:
+        events.append((session_id, event))
+
+    opened = await execute_tool(
+        tool_name="sys_browser_open",
+        arguments=json.dumps({"url": "http://localhost:3000/app"}),
+        resource_registry=registry,
+        agent_spec=AgentSpec(spec_version=1, browser=True),
+        conversation_id="conv_browser",
+        publish_event=publish,
+    )
+
+    assert json.loads(opened) == {
+        "status": "opened",
+        "browser_id": "browser_default",
+        "url": "http://localhost:3000/app",
+        "origin": "http://localhost:3000",
+    }
+    resource = registry.get_browser_resource("conv_browser")
+    assert resource is not None
+    assert resource.metadata["url"] == "http://localhost:3000/app"
+    assert events[0][1]["type"] == "session.resource.created"
+    assert events[0][1]["resource_type"] == "browser"
+
+    snapshot = await execute_tool(
+        tool_name="sys_browser_snapshot",
+        arguments="{}",
+        resource_registry=registry,
+        agent_spec=AgentSpec(spec_version=1, browser=True),
+        conversation_id="conv_browser",
+    )
+    assert json.loads(snapshot)["viewport"] == {
+        "width": 1280,
+        "height": 720,
+        "device_scale_factor": 1,
+    }
+
+    closed = await execute_tool(
+        tool_name="sys_browser_close",
+        arguments="{}",
+        resource_registry=registry,
+        agent_spec=AgentSpec(spec_version=1, browser=True),
+        conversation_id="conv_browser",
+        publish_event=publish,
+    )
+
+    assert json.loads(closed) == {"browser_id": "browser_default", "closed": True}
+    assert registry.get_browser_resource("conv_browser") is None
+    assert events[-1][1] == {
+        "type": "session.resource.deleted",
+        "session_id": "conv_browser",
+        "resource_id": "browser_default",
+        "resource_type": "browser",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runner_browser_open_denies_external_without_approval() -> None:
+    """External browser origins are denied until the AP approval gate is added."""
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    registry = SessionResourceRegistry()
+
+    output = await execute_tool(
+        tool_name="sys_browser_open",
+        arguments=json.dumps({"url": "https://93.184.216.34/"}),
+        resource_registry=registry,
+        agent_spec=AgentSpec(spec_version=1, browser=True),
+        conversation_id="conv_browser",
+    )
+
+    body = json.loads(output)
+    assert body["status"] == "denied"
+    assert body["reason"] == "external origin requires approval"
+    assert registry.get_browser_resource("conv_browser") is None
+
+
+@pytest.mark.asyncio
+async def test_runner_browser_dispatch_requires_spec_opt_in() -> None:
+    """Direct runner dispatch cannot bypass the ``browser: true`` gate."""
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    registry = SessionResourceRegistry()
+
+    output = await execute_tool(
+        tool_name="sys_browser_open",
+        arguments=json.dumps({"url": "http://localhost:3000/app"}),
+        resource_registry=registry,
+        agent_spec=AgentSpec(spec_version=1),
+        conversation_id="conv_browser",
+    )
+
+    assert output == "Error: browser tools require browser: true in the agent spec"
+    assert registry.get_browser_resource("conv_browser") is None
+
+
 class _StubTerminalInstance:
     """Minimal stand-in for a launched ``TerminalInstance``.
 
@@ -5473,6 +5580,50 @@ def test_native_relay_advertises_terminal_tools_per_spec_gate(
     # arm means ToolManager registered terminal tools without the spec
     # gate (registration regression).
     assert relayed & all_terminal_tools == expected_terminal_tools
+
+
+@pytest.mark.parametrize(
+    "browser, expected_browser_tools",
+    [
+        pytest.param(
+            True,
+            {
+                "sys_browser_open",
+                "sys_browser_click",
+                "sys_browser_type",
+                "sys_browser_key",
+                "sys_browser_snapshot",
+                "sys_browser_screenshot",
+                "sys_browser_close",
+            },
+            id="browser-enabled",
+        ),
+        pytest.param(False, set(), id="browser-disabled"),
+    ],
+)
+def test_native_relay_advertises_browser_tools_per_spec_gate(
+    browser: bool,
+    expected_browser_tools: set[str],
+) -> None:
+    """The native relay advertises ``sys_browser_*`` iff the spec opts in."""
+    from omnigent.runner.tool_dispatch import _NATIVE_RELAY_BUILTIN_TOOLS
+    from omnigent.tools.manager import ToolManager
+
+    spec = AgentSpec(spec_version=1, browser=browser)
+
+    schema_names = {s["function"]["name"] for s in ToolManager(spec).get_tool_schemas()}
+    relayed = schema_names & _NATIVE_RELAY_BUILTIN_TOOLS
+
+    all_browser_tools = {
+        "sys_browser_open",
+        "sys_browser_click",
+        "sys_browser_type",
+        "sys_browser_key",
+        "sys_browser_snapshot",
+        "sys_browser_screenshot",
+        "sys_browser_close",
+    }
+    assert relayed & all_browser_tools == expected_browser_tools
 
 
 def test_session_create_is_runner_local() -> None:
