@@ -926,7 +926,7 @@ def test_polly_prefers_codex_subscription_over_configured_claude_brain(
                 "kind": "subscription",
                 "cli": "claude",
                 "default": ["anthropic"],
-            }
+            },
         },
     )
     dispatch = Mock()
