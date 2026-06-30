@@ -52,6 +52,10 @@ def test_claude_terminal_request_pins_launch_cwd(tmp_path, monkeypatch) -> None:
     Channels flag is not snuck in.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "omnigent.claude_native_bridge._USER_CLAUDE_SETTINGS_PATH",
+        tmp_path / "missing-settings.json",
+    )
     body = claude_native._claude_terminal_request(
         ("--resume", "claude-session", "-p", "hi"),
         command="claude",

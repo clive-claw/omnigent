@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -605,9 +606,10 @@ class CodexNativeAppServer:
         if self.listen_url is None or self.listen_url.startswith("unix://"):
             with contextlib.suppress(FileNotFoundError):
                 self.socket_path.unlink()
+        codex_config_source = _codex_home_config_source_from_env()
         _populate_codex_home_config(
             self.codex_home,
-            _codex_home_config_source_from_env(),
+            codex_config_source,
         )
         # Write the MCP server config into config.toml so the app-server
         # discovers it at config load. The -c overrides may not be honored
@@ -639,7 +641,10 @@ class CodexNativeAppServer:
             # ap_server_url the hook is still registered + trusted but
             # no-ops.
             _write_codex_policy_hooks_file(
-                self.codex_home, self.bridge_dir, self.python_executable
+                self.codex_home,
+                self.bridge_dir,
+                self.python_executable,
+                inherited_hooks_path=codex_config_source / _CODEX_HOOKS_FILE,
             )
             if self.ap_server_url:
                 write_policy_hook_config(
@@ -976,8 +981,121 @@ def _codex_policy_hooks_settings(
     }
 
 
+def _read_codex_hooks_file(path: Path | None) -> dict[str, Any]:
+    """
+    Read a Codex ``hooks.json`` payload if it is present and well-formed.
+
+    Hook inheritance is best-effort: a malformed user hook file must not block
+    an Omnigent session from starting or registering its own policy hooks.
+
+    :param path: Candidate hooks file path, or ``None``.
+    :returns: Parsed object when it has a ``hooks`` mapping; otherwise an
+        empty hooks payload.
+    """
+    if path is None or not path.is_file():
+        return {"hooks": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"hooks": {}}
+    if not isinstance(payload, dict) or not isinstance(payload.get("hooks"), dict):
+        return {"hooks": {}}
+    return payload
+
+
+def _merge_codex_hooks_settings(
+    inherited: dict[str, Any], policy: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Merge user hooks with Omnigent's policy hooks.
+
+    Existing user hooks stay first for each event. Codex trust-state keys carry
+    per-event indexes, so appending Omnigent hooks preserves the user's trusted
+    hook indexes when we remap trust entries from the real ``CODEX_HOME`` to the
+    private Omnigent ``CODEX_HOME``.
+
+    :param inherited: Parsed user hooks payload.
+    :param policy: Omnigent policy hooks payload.
+    :returns: New merged ``hooks.json`` payload.
+    """
+    inherited_hooks = inherited.get("hooks") if isinstance(inherited, dict) else None
+    policy_hooks = policy.get("hooks") if isinstance(policy, dict) else None
+    merged_hooks: dict[str, Any] = {}
+
+    if isinstance(inherited_hooks, dict):
+        for event_name, entries in inherited_hooks.items():
+            if isinstance(entries, list):
+                merged_hooks[str(event_name)] = copy.deepcopy(entries)
+
+    if isinstance(policy_hooks, dict):
+        for event_name, entries in policy_hooks.items():
+            if not isinstance(entries, list):
+                continue
+            merged_hooks.setdefault(str(event_name), [])
+            merged_hooks[str(event_name)].extend(copy.deepcopy(entries))
+
+    return {"hooks": merged_hooks}
+
+
+def _remap_codex_hook_trust_state(
+    config_path: Path, source_hooks_path: Path | None, target_hooks_path: Path
+) -> None:
+    """
+    Copy trusted hook-state tables from the real hooks file to the private one.
+
+    Codex keys trusted hook hashes by absolute hook-file path, e.g.
+    ``[hooks.state."/Users/me/.codex/hooks.json:stop:0:0"]``. Omnigent writes a
+    private ``hooks.json``, so inherited user hooks would otherwise be present
+    but untrusted. This appends equivalent trust-state tables for the private
+    hook path, leaving the user's original trust state untouched.
+
+    :param config_path: Private ``config.toml`` path.
+    :param source_hooks_path: Real Codex hooks path whose trust entries should
+        be mirrored.
+    :param target_hooks_path: Private hooks path written for this session.
+    :returns: None.
+    """
+    if source_hooks_path is None or not config_path.is_file():
+        return
+
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    source_prefix = f'[hooks.state."{source_hooks_path}:'
+    target_prefix = f'[hooks.state."{target_hooks_path}:'
+    lines = text.splitlines(keepends=True)
+    blocks: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith(source_prefix):
+            index += 1
+            continue
+
+        block = [line.replace(source_prefix, target_prefix, 1)]
+        index += 1
+        while index < len(lines) and not lines[index].startswith("["):
+            block.append(lines[index])
+            index += 1
+        rendered = "".join(block)
+        if block[0].strip() not in text:
+            blocks.append(rendered if rendered.endswith("\n") else f"{rendered}\n")
+
+    if not blocks:
+        return
+
+    separator = "" if text.endswith("\n") else "\n"
+    config_path.write_text(f"{text}{separator}{''.join(blocks)}", encoding="utf-8")
+
+
 def _write_codex_policy_hooks_file(
-    codex_home: Path, bridge_dir: Path, python_executable: str | None
+    codex_home: Path,
+    bridge_dir: Path,
+    python_executable: str | None,
+    *,
+    inherited_hooks_path: Path | None = None,
 ) -> None:
     """
     Write ``hooks.json`` into the private CODEX_HOME (atomically).
@@ -985,17 +1103,23 @@ def _write_codex_policy_hooks_file(
     :param codex_home: Private per-session ``CODEX_HOME`` directory.
     :param bridge_dir: Native Codex bridge directory for the hook command.
     :param python_executable: Python executable for the hook command.
+    :param inherited_hooks_path: Optional hooks file from the real Codex home
+        whose user hooks should be preserved in the private session.
     :returns: None.
     """
     codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = codex_home / _CODEX_HOOKS_FILE
-    payload = _codex_policy_hooks_settings(bridge_dir, python_executable)
+    inherited = _read_codex_hooks_file(inherited_hooks_path)
+    payload = _merge_codex_hooks_settings(
+        inherited, _codex_policy_hooks_settings(bridge_dir, python_executable)
+    )
     fd, tmp_name = tempfile.mkstemp(prefix=f"{_CODEX_HOOKS_FILE}.", dir=str(codex_home))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, sort_keys=True)
             handle.write("\n")
         os.replace(tmp_name, path)
+        _remap_codex_hook_trust_state(codex_home / "config.toml", inherited_hooks_path, path)
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
