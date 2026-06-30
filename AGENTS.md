@@ -5,6 +5,20 @@ repository. See `CONTRIBUTING.md` for the full contributor workflow.
 
 ## Pull requests
 
+This checkout is normally used for Adam's fork-local work, not direct upstream
+open-source merges.
+
+- Treat `clive-claw/omnigent:local/clive-claw` as the default PR base and merge
+  target for local work.
+- Do not open, merge, or retarget PRs against `omnigent-ai/omnigent` unless the
+  user explicitly asks for an upstream open-source PR.
+- If multiple local PRs are stacked or related, merge/update them in dependency
+  order against `local/clive-claw`, then rebase later PR branches onto the
+  refreshed `origin/local/clive-claw` before pushing with `--force-with-lease`.
+- Before any merge, state the exact repository and base branch, for example
+  `clive-claw/omnigent:local/clive-claw`, and stop if the user's intent is
+  ambiguous.
+
 When you open a pull request, fill in the repo's PR template at
 `.github/pull_request_template.md` (case-sensitive on Linux — note the lowercase
 filename). Keep every section and checkbox row so reviewers can skim them.
