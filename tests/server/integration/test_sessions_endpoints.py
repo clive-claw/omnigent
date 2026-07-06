@@ -2988,6 +2988,191 @@ async def test_patch_runner_rebind_clears_stale_failed_status(
     assert cache_after == "idle"
 
 
+async def test_patch_runner_rebind_recovers_stale_offline_runner_binding(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    PATCH rebind recovers a session pinned to an offline runner.
+
+    This is the local restart failure mode seen in Foundry: the server
+    and host are back, a new runner is registered, but the existing
+    session row still points at the old offline runner id. Rebinding
+    through the public PATCH API must replace that stale affinity and
+    clear the stale failed status so the web UI can resume the same
+    conversation instead of leaving it stuck on runner_failed_to_start.
+    """
+    from omnigent.server.routes import sessions as sessions_module
+
+    class _RecoveringRunnerClient:
+        """Runner client that records PATCH-path session init."""
+
+        def __init__(self) -> None:
+            """:returns: None."""
+            self.posts: list[dict[str, Any]] = []
+
+        async def post(
+            self,
+            url: str,
+            *,
+            json: dict[str, Any],
+            timeout: float,
+        ) -> httpx.Response:
+            """
+            Record the runner init POST.
+
+            :param url: Runner URL path, e.g. ``"/v1/sessions"``.
+            :param json: Request body sent to the runner.
+            :param timeout: HTTP timeout in seconds, e.g. ``10.0``.
+            :returns: HTTP 200 response.
+            """
+            self.posts.append({"url": url, "json": json, "timeout": timeout})
+            return httpx.Response(200, request=httpx.Request("POST", url))
+
+    class _LiveRunnerWebSocket:
+        """Minimal WebSocket stored in the tunnel registry."""
+
+        async def send_text(self, data: str) -> None:
+            """
+            Accept unexpected sends from the registry.
+
+            :param data: Encoded frame.
+            :returns: None.
+            """
+            del data
+
+        async def receive_text(self) -> str:
+            """
+            Return no inbound frames.
+
+            :returns: Empty frame string.
+            """
+            return ""
+
+    def _registered_runner_id(
+        _runner_router: Any,
+        raw_runner_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> str:
+        """
+        Accept the live runner id without a real tunnel registry.
+
+        :param _runner_router: Ignored runner router placeholder.
+        :param raw_runner_id: Requested runner id, e.g. ``"runner_live"``.
+        :param user_id: Optional authenticated user id.
+        :returns: The trimmed runner id.
+        """
+        del _runner_router, user_id
+        assert raw_runner_id in {"runner_dead", "runner_live"}
+        return raw_runner_id.strip()
+
+    async def _get_runner_client(
+        session_id: str,
+        _runner_router: Any,
+    ) -> _RecoveringRunnerClient:
+        """
+        Return the recovering runner client for the patched session.
+
+        :param session_id: Session id being rebound.
+        :param _runner_router: Ignored runner router placeholder.
+        :returns: Runner client stub.
+        """
+        assert session_id == sid
+        return runner_client
+
+    async def _ensure_runner_relay_ready(
+        session_id: str,
+        runner_id: str,
+        runner_client_arg: _RecoveringRunnerClient,
+        _conversation_store: Any,
+    ) -> None:
+        """
+        Capture relay restart intent without starting a background relay.
+
+        :param session_id: Session id.
+        :param runner_id: New runner id.
+        :param runner_client_arg: Runner client stub.
+        :param _conversation_store: Conversation store from the route.
+        :returns: None.
+        """
+        relay_restarts.append((session_id, runner_id, runner_client_arg))
+
+    runner_client = _RecoveringRunnerClient()
+    relay_restarts: list[tuple[str, str, _RecoveringRunnerClient]] = []
+    published: list[dict[str, Any]] = []
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"])
+    sid = session["id"]
+    monkeypatch.setattr(sessions_module, "_registered_runner_id", _registered_runner_id)
+    monkeypatch.setattr(sessions_module, "_get_runner_client", _get_runner_client)
+    monkeypatch.setattr(sessions_module, "_ensure_runner_relay_ready", _ensure_runner_relay_ready)
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.session_stream.publish",
+        lambda _session_id, event: published.append(event),
+    )
+    runner_client.posts.clear()
+    sessions_module._session_status_cache.pop(sid, None)
+    try:
+        stale = await client.patch(
+            f"/v1/sessions/{sid}",
+            json={"runner_id": "runner_dead"},
+        )
+        assert stale.status_code == 200, stale.text
+        runner_client.posts.clear()
+        relay_restarts.clear()
+        published.clear()
+        sessions_module._publish_status(
+            sid,
+            "failed",
+            sessions_module.ErrorDetail(
+                code="runner_failed_to_start",
+                message="old runner failed to start",
+            ),
+        )
+        from omnigent.runner.transports.ws_tunnel.frames import HelloFrame
+
+        app = getattr(client._transport, "app")
+        app.state.tunnel_registry.register(
+            "runner_live",
+            _LiveRunnerWebSocket(),
+            HelloFrame(
+                runner_version="0.0.0-test",
+                frame_protocol_version=1,
+                harnesses=["codex"],
+            ),
+        )
+
+        resp = await client.patch(
+            f"/v1/sessions/{sid}",
+            json={"runner_id": "runner_live"},
+        )
+        cache_after = sessions_module._session_status_cache.get(sid)
+    finally:
+        sessions_module._session_status_cache.pop(sid, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["runner_id"] == "runner_live"
+    assert body["runner_online"] is True
+    assert body["status"] == "idle"
+    assert body["last_task_error"] is None
+    assert runner_client.posts == [
+        {
+            "url": "/v1/sessions",
+            "json": {
+                "session_id": sid,
+                "agent_id": agent["id"],
+                "sub_agent_name": None,
+            },
+            "timeout": 10.0,
+        }
+    ]
+    assert relay_restarts == [(sid, "runner_live", runner_client)]
+    assert [event["status"] for event in published] == ["failed", "idle"]
+    assert cache_after == "idle"
+
+
 async def test_post_external_session_status_idle_forwards_persisted_assistant_output(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
